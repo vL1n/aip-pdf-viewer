@@ -306,10 +306,13 @@ export function createServer({ db, rootPath, webDistPath, indexManager }: Create
   if (webDistPath) {
     app.register(staticPlugin, {
       root: webDistPath,
+      // 避免 @fastify/static 注册通配路由 `/*`（包含 HEAD）与我们自己的 SPA fallback 冲突
+      wildcard: false,
       index: false
     });
 
-    app.get("/*", async (_req, reply) => {
+    // 单页应用入口（当前 UI 没有前端路由，/ 足够；如果未来加路由再扩展）
+    app.get("/", async (_req, reply) => {
       const indexHtml = path.join(webDistPath, "index.html");
       if (!fs.existsSync(indexHtml)) return reply.code(404).send("web not built");
       return reply.type("text/html").send(fs.readFileSync(indexHtml));
