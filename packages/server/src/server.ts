@@ -133,8 +133,10 @@ export function createServer({ db, rootPath, webDistPath, indexManager }: Create
     const q = req.query as { q?: string; icao?: string; limit?: string; offset?: string };
     const query = (q.q || "").trim();
     const icao = (q.icao || "").trim().toUpperCase();
-    const limit = Math.min(Math.max(parseInt(q.limit || "50", 10) || 50, 1), 200);
-    const offset = Math.max(parseInt(q.offset || "0", 10) || 0, 0);
+    const limitRaw = (q.limit || "").trim().toLowerCase();
+    const unlimited = limitRaw === "all" || limitRaw === "0";
+    const limit = unlimited ? null : Math.min(Math.max(parseInt(q.limit || "50", 10) || 50, 1), 200);
+    const offset = unlimited ? 0 : Math.max(parseInt(q.offset || "0", 10) || 0, 0);
 
     if (!query) return { query, icao: icao || null, total: 0, items: [] };
 
@@ -217,12 +219,12 @@ export function createServer({ db, rootPath, webDistPath, indexManager }: Create
       FROM dedup
       WHERE rn = 1
       ORDER BY rank
-      LIMIT ? OFFSET ?
+      ${unlimited ? "" : "LIMIT ? OFFSET ?"}
     `;
 
     const items = db
       .prepare(candidatesSql)
-      .all(...ftsParams, ...likeParamsFull, limit, offset);
+      .all(...ftsParams, ...likeParamsFull, ...(unlimited ? [] : [limit, offset]));
 
     const totalSql = `
       WITH candidates AS (

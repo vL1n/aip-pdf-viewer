@@ -63,6 +63,8 @@ export async function apiTree(icao: string) {
 export async function apiSearch(q: string, icao?: string) {
   const qs = new URLSearchParams({ q });
   if (icao) qs.set("icao", icao);
+  // 默认拉取全部结果
+  qs.set("limit", "all");
   return await getJson<{ query: string; icao: string | null; total: number; items: SearchItem[] }>(
     `/api/search?${qs.toString()}`
   );

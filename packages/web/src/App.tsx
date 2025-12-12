@@ -19,6 +19,7 @@ import {
   Collapse,
   Divider,
   Empty,
+  Grid,
   Input,
   Layout,
   List,
@@ -28,19 +29,30 @@ import {
   Space,
   Spin,
   Tag,
+  Tooltip,
   Typography,
   theme
 } from "antd";
 import type { DataNode } from "antd/es/tree";
 import { Tree } from "antd";
-import { FilePdfOutlined, ReloadOutlined, SearchOutlined } from "@ant-design/icons";
-import { Viewer, Worker } from "@react-pdf-viewer/core";
+import {
+  FilePdfOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
+  ReloadOutlined,
+  SearchOutlined
+} from "@ant-design/icons";
+import { SpecialZoomLevel, Viewer, Worker } from "@react-pdf-viewer/core";
 import { defaultLayoutPlugin } from "@react-pdf-viewer/default-layout";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 type Mode = "tree" | "search";
 
 export function App() {
+  const screens = Grid.useBreakpoint();
+  const compactHeader = !screens.md;
+  const [siderCollapsed, setSiderCollapsed] = useState(false);
+
   const [indexStatus, setIndexStatus] = useState<IndexStatus | null>(null);
   const ready = indexStatus?.phase === "ready";
   const [apiConnectError, setApiConnectError] = useState<string | null>(null);
@@ -279,6 +291,8 @@ export function App() {
             flex: "0 0 auto",
             display: "flex",
             alignItems: "center",
+            flexWrap: "nowrap",
+            whiteSpace: "nowrap",
             height: 64,
             lineHeight: "normal",
             paddingInline: 12,
@@ -286,17 +300,27 @@ export function App() {
             borderBottom: `1px solid ${token.colorBorderSecondary}`
           }}
         >
-          <Space size={12} align="center" style={{ width: "100%", justifyContent: "space-between" }}>
-            <Space size={12} align="center" style={{ minWidth: 0 }}>
-              <Typography.Text strong style={{ whiteSpace: "nowrap" }}>
+          <Space size={12} align="center" style={{ width: "100%", justifyContent: "space-between", minWidth: 0 }}>
+            <Space size={12} align="center" style={{ minWidth: 0, overflow: "hidden" }}>
+              <Typography.Text strong ellipsis style={{ minWidth: 0 }}>
                 AIP PDF Viewer
               </Typography.Text>
               <Divider type="vertical" style={{ height: 24, marginInline: 4 }} />
             </Space>
 
-            <Space size={12} align="center" style={{ minWidth: 0, justifyContent: "flex-end" }} wrap>
+            <Space
+              size={12}
+              align="center"
+              style={{ minWidth: 0, justifyContent: "flex-end", flexWrap: "nowrap" }}
+            >
+              <Button
+                type="text"
+                aria-label={siderCollapsed ? "展开侧边栏" : "收起侧边栏"}
+                icon={siderCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+                onClick={() => setSiderCollapsed((v) => !v)}
+              />
               <Select
-                style={{ width: 320 }}
+                style={{ width: 280, maxWidth: "35vw", flex: "0 1 280px" }}
                 value={selectedIcao || undefined}
                 onChange={(v: string) => setSelectedIcao(v)}
                 loading={airportsLoading}
@@ -311,7 +335,7 @@ export function App() {
               />
 
               <Input.Search
-                style={{ width: 520, maxWidth: "55vw" }}
+                style={{ flex: "1 1 520px", minWidth: 220, maxWidth: "55vw" }}
                 value={query}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => setQuery(e.target.value)}
                 onSearch={() => void doSearch()}
@@ -335,18 +359,21 @@ export function App() {
                   })();
                 }}
               >
-                重建索引
+                {compactHeader ? null : "重建索引"}
               </Button>
 
               {openedFileId ? (
-                <Button
-                  icon={<FilePdfOutlined />}
-                  href={pdfUrl(openedFileId)}
-                  target="_blank"
-                  type="default"
-                >
-                  新窗口打开
-                </Button>
+                <Tooltip title="新窗口打开">
+                  <Button
+                    icon={<FilePdfOutlined />}
+                    href={pdfUrl(openedFileId)}
+                    target="_blank"
+                    type="default"
+                    aria-label="新窗口打开"
+                  >
+                    {compactHeader ? null : "新窗口打开"}
+                  </Button>
+                </Tooltip>
               ) : null}
             </Space>
           </Space>
@@ -388,11 +415,14 @@ export function App() {
           </div>
         ) : null}
 
-        <Layout style={{ flex: "1 1 auto", minHeight: 0 }}>
+        <Layout style={{ flex: "1 1 auto", minHeight: 0, height: "100%" }}>
           <Layout.Sider
             width={420}
             collapsible
             collapsedWidth={0}
+            collapsed={siderCollapsed}
+            onCollapse={(v: boolean) => setSiderCollapsed(v)}
+            trigger={null}
             theme="light"
             style={{ borderRight: `1px solid ${token.colorBorderSecondary}`, overflow: "hidden", height: "100%" }}
           >
@@ -401,6 +431,13 @@ export function App() {
                 <Space align="center" style={{ width: "100%", justifyContent: "space-between" }}>
                   <Typography.Text strong>{mode === "search" ? "搜索结果" : "目录树"}</Typography.Text>
                   <Space size={8}>
+                    <Button
+                      size="small"
+                      type="text"
+                      aria-label="收起侧边栏"
+                      icon={<MenuFoldOutlined />}
+                      onClick={() => setSiderCollapsed(true)}
+                    />
                     <Button
                       size="small"
                       onClick={() => {
@@ -493,26 +530,51 @@ export function App() {
             </div>
           </Layout.Sider>
 
-          <Layout.Content style={{ padding: 12, overflow: "hidden" }}>
+          <Layout.Content style={{ padding: 12, overflow: "hidden", minHeight: 0 }}>
             <Layout style={{ height: "100%", background: token.colorBgLayout, minHeight: 0 }}>
               <Layout.Content
                 style={{
                   height: "100%",
+                  minHeight: 0,
                   background: token.colorBgContainer,
                   border: `1px solid ${token.colorBorderSecondary}`,
                   borderRadius: token.borderRadiusLG,
                   overflow: "hidden"
                 }}
               >
-                <div style={{ height: "100%", overflow: "hidden" }}>
+                <div
+                  style={{
+                    height: "100%",
+                    minHeight: 0,
+                    overflow: "hidden",
+                    // 让圆角“看得见”：加一层内边距/底色，避免 PDF 内容与滚动条贴边把圆角视觉上“顶没”
+                    padding: 8,
+                    background: token.colorBgLayout,
+                    boxSizing: "border-box"
+                  }}
+                >
                   {openedFileId ? (
-                    <div style={{ height: "100%", overflow: "hidden" }}>
-                      <Worker
-                        // Vite 下推荐用 pdfjs-dist 的 worker（无需外网 CDN）
-                        workerUrl={pdfWorkerUrl}
-                      >
-                        <Viewer fileUrl={pdfUrl(openedFileId)} plugins={[pdfLayoutPlugin]} />
-                      </Worker>
+                    <div
+                      style={{
+                        height: "100%",
+                        minHeight: 0,
+                        overflow: "hidden",
+                        borderRadius: token.borderRadiusLG - 2,
+                        background: token.colorBgContainer
+                      }}
+                    >
+                      <div style={{ height: "100%", minHeight: 0, overflow: "auto" }}>
+                        <Worker
+                          // Vite 下推荐用 pdfjs-dist 的 worker（无需外网 CDN）
+                          workerUrl={pdfWorkerUrl}
+                        >
+                          <Viewer
+                            fileUrl={pdfUrl(openedFileId)}
+                            defaultScale={SpecialZoomLevel.PageFit}
+                            plugins={[pdfLayoutPlugin]}
+                          />
+                        </Worker>
+                      </div>
                     </div>
                   ) : (
                     <div style={{ padding: 24 }}>
