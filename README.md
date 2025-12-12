@@ -1,4 +1,4 @@
-# NAIP PDF Viewer（本地航图索引+浏览）
+# AIP PDF Viewer（本地航图索引+浏览）
 
 你给的数据目录结构（示例）：
 
@@ -70,7 +70,7 @@ pnpm dev -- --root "/xxx/xxx/eaip/20251201" --api-port 13001 --web-port 13002 --
 
 ```bash
 pnpm -r build
-pnpm --filter @naip/server start -- --root "/xxx/xxx/eaip/20251201" --port 3000
+pnpm --filter @aip/server start -- --root "/xxx/xxx/eaip/20251201" --port 3000
 ```
 
 打开：`http://localhost:3000`

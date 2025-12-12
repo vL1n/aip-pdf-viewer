@@ -1,13 +1,13 @@
 {
-  "name": "naip-pdf-viewer",
+  "name": "aip-pdf-viewer",
   "private": true,
   "packageManager": "pnpm@9.15.4",
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:split": "pnpm -r dev",
     "build": "pnpm -r build",
-    "start": "pnpm --filter @naip/server start",
-    "dist:win": "pnpm --filter @naip/desktop dist:win",
+    "start": "pnpm --filter @aip/server start",
+    "dist:win": "pnpm --filter @aip/desktop dist:win",
     "typecheck": "pnpm -r typecheck"
   }
 }

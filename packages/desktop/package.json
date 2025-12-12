@@ -1,15 +1,17 @@
 {
-  "name": "@naip/desktop",
+  "name": "@aip/desktop",
   "private": true,
+  "version": "0.1.0",
+  "description": "AIP PDF Viewer desktop app",
+  "author": "aip-pdf-viewer",
   "type": "module",
   "main": "dist/main.js",
   "scripts": {
     "dev": "node dist/main.js",
     "build": "tsc -p tsconfig.json && node scripts/copy-resources.mjs",
-    "dist:win": "pnpm -C ../../ --filter @naip/web build && pnpm -C ../../ --filter @naip/server build && pnpm -C . build && electron-builder --win --x64 --publish never"
+    "dist:win": "pnpm -C ../../ --filter @aip/web build && pnpm -C ../../ --filter @aip/server build && pnpm -C . build && electron-builder --win --x64 --publish never"
   },
   "dependencies": {
-    "electron": "^33.3.1",
     "fastify": "^5.2.1",
     "@fastify/static": "^8.2.0",
     "better-sqlite3": "^11.7.0",
@@ -20,12 +22,13 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "electron": "^33.3.1",
     "electron-builder": "^25.1.8",
     "typescript": "^5.7.2"
   },
   "build": {
-    "appId": "com.naip.pdfviewer",
-    "productName": "NAIP PDF Viewer",
+    "appId": "com.aip.pdfviewer",
+    "productName": "AIP PDF Viewer",
     "directories": {
       "output": "dist-win"
     },

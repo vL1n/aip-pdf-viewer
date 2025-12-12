@@ -21,11 +21,11 @@ rm(outWeb);
 rm(outServer);
 
 if (!fs.existsSync(webDist)) {
-  console.error(`[desktop] 缺少 web 构建产物：${webDist}（请先运行 pnpm --filter @naip/web build）`);
+  console.error(`[desktop] 缺少 web 构建产物：${webDist}（请先运行 pnpm --filter @aip/web build）`);
   process.exit(1);
 }
 if (!fs.existsSync(serverDist)) {
-  console.error(`[desktop] 缺少 server 构建产物：${serverDist}（请先运行 pnpm --filter @naip/server build）`);
+  console.error(`[desktop] 缺少 server 构建产物：${serverDist}（请先运行 pnpm --filter @aip/server build）`);
   process.exit(1);
 }
 

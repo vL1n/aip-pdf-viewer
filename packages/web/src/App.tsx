@@ -289,7 +289,7 @@ export function App() {
           <Space size={12} align="center" style={{ width: "100%", justifyContent: "space-between" }}>
             <Space size={12} align="center" style={{ minWidth: 0 }}>
               <Typography.Text strong style={{ whiteSpace: "nowrap" }}>
-                NAIP PDF Viewer
+                AIP PDF Viewer
               </Typography.Text>
               <Divider type="vertical" style={{ height: 24, marginInline: 4 }} />
             </Space>

@@ -78,17 +78,17 @@ function run(cmd, args, extraEnv) {
 
 const args = parseArgs(process.argv.slice(2));
 
-const root = args.root || process.env.NAIP_ROOT;
+const root = args.root || process.env.AIP_ROOT || process.env.NAIP_ROOT;
 if (!root) {
   console.error('必须提供 --root "<pdf根目录>"，例如：--root "/xxx/xxx/eaip/20251201"');
   process.exit(1);
 }
 
-const apiPort = Number(args["api-port"] || process.env.NAIP_API_PORT || 13001);
-const webPort = Number(args["web-port"] || process.env.NAIP_WEB_PORT || 13002);
+const apiPort = Number(args["api-port"] || process.env.AIP_API_PORT || process.env.NAIP_API_PORT || 13001);
+const webPort = Number(args["web-port"] || process.env.AIP_WEB_PORT || process.env.NAIP_WEB_PORT || 13002);
 const host = String(args.host || process.env.HOST || "0.0.0.0");
 // 默认每次都重建索引库；如需跳过，用 --no-rebuild-db
-const rebuildDb = !Boolean(args["no-rebuild-db"] || process.env.NAIP_NO_REBUILD_DB);
+const rebuildDb = !Boolean(args["no-rebuild-db"] || process.env.AIP_NO_REBUILD_DB || process.env.NAIP_NO_REBUILD_DB);
 const waitIndex = !Boolean(args["no-wait-index"]);
 
 const apiBase = `http://localhost:${apiPort}`;
@@ -104,7 +104,7 @@ try {
 console.log(`[dev] 启动后端：port=${apiPort} root=${root}`);
 const serverArgs = [
   "--filter",
-  "@naip/server",
+  "@aip/server",
   "dev",
   "--root",
   root,
@@ -150,7 +150,7 @@ server.on("exit", (code) => {
 
   web = run(
     "pnpm",
-    ["--filter", "@naip/web", "dev", "--port", String(webPort), "--host", host],
+    ["--filter", "@aip/web", "dev", "--port", String(webPort), "--host", host],
     {
       VITE_API_TARGET: apiBase,
       TMPDIR: tmpDir
