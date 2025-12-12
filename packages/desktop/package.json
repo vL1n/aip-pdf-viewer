@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node dist/main.js",
     "build": "tsc -p tsconfig.json && node scripts/copy-resources.mjs",
-    "dist:win": "pnpm -C ../../ --filter @naip/web build && pnpm -C ../../ --filter @naip/server build && pnpm -C . build && electron-builder --win --x64"
+    "dist:win": "pnpm -C ../../ --filter @naip/web build && pnpm -C ../../ --filter @naip/server build && pnpm -C . build && electron-builder --win --x64 --publish never"
   },
   "dependencies": {
     "electron": "^33.3.1",
