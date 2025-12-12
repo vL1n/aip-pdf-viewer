@@ -4,7 +4,7 @@ Param(
 
 $ErrorActionPreference = "Stop"
 
-$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..\..")
 $launcherRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 
 $out = Join-Path $launcherRoot $OutDir
@@ -24,7 +24,11 @@ Write-Host "[launcher] deploy server (prod node_modules)..."
 pnpm -C $repoRoot --filter @aip/server deploy --prod (Join-Path $bundle "server")
 
 Write-Host "[launcher] copy web dist..."
-Copy-Item -Recurse -Force (Join-Path $repoRoot "packages\web\dist") (Join-Path $bundle "web")
+$webDist = Join-Path $repoRoot "packages\web\dist"
+if (!(Test-Path $webDist)) {
+  throw "web dist 不存在：$webDist（请确认 pnpm -C repoRoot --filter @aip/web build 已成功）"
+}
+Copy-Item -Recurse -Force $webDist (Join-Path $bundle "web")
 
 Write-Host "[launcher] copy node.exe..."
 $nodeExe = (Get-Command node).Source
