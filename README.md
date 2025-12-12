@@ -33,7 +33,7 @@ pnpm config set strict-ssl false
 2) 一条命令启动（先启动后端，health ok 后再启动前端；页面会显示“索引构建进度条”）：
 
 ```bash
-pnpm dev -- --root "/Volumes/Alpha/vl1n/Aero/2512naip"
+pnpm dev -- --root "/xxx/xxx/eaip/20251201"
 ```
 
 可选参数：
@@ -47,7 +47,7 @@ pnpm dev -- --root "/Volumes/Alpha/vl1n/Aero/2512naip"
 示例：
 
 ```bash
-pnpm dev -- --root "/Volumes/Alpha/vl1n/Aero/2512naip" --api-port 13001 --web-port 13002 --rebuild-db
+pnpm dev -- --root "/xxx/xxx/eaip/20251201" --api-port 13001 --web-port 13002 --rebuild-db
 ```
 
 打开：`http://localhost:13002`（或你指定的 `--web-port`）
@@ -70,7 +70,7 @@ pnpm dev -- --root "/Volumes/Alpha/vl1n/Aero/2512naip" --api-port 13001 --web-po
 
 ```bash
 pnpm -r build
-pnpm --filter @naip/server start -- --root "/Volumes/Alpha/vl1n/Aero/2512naip" --port 3000
+pnpm --filter @naip/server start -- --root "/xxx/xxx/eaip/20251201" --port 3000
 ```
 
 打开：`http://localhost:3000`

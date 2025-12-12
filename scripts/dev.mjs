@@ -80,7 +80,7 @@ const args = parseArgs(process.argv.slice(2));
 
 const root = args.root || process.env.NAIP_ROOT;
 if (!root) {
-  console.error('必须提供 --root "<pdf根目录>"，例如：--root "/Volumes/Alpha/vl1n/Aero/2512naip"');
+  console.error('必须提供 --root "<pdf根目录>"，例如：--root "/xxx/xxx/eaip/20251201"');
   process.exit(1);
 }
 

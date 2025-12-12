@@ -33,7 +33,7 @@ async function main() {
   const rootPath = path.resolve(opts.root || "");
   if (!opts.root) {
     // eslint-disable-next-line no-console
-    console.error("必须提供 --root <path>（例如 /Volumes/Alpha/vl1n/Aero/2512naip）");
+    console.error("必须提供 --root <path>（例如 /xxx/xxx/eaip/20251201）");
     process.exit(1);
   }
 
