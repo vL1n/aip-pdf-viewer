@@ -20,8 +20,24 @@ Write-Host "[launcher] build web/server..."
 pnpm -C $repoRoot --filter @aip/web build
 pnpm -C $repoRoot --filter @aip/server build
 
-Write-Host "[launcher] deploy server (prod node_modules)..."
-pnpm -C $repoRoot --filter @aip/server deploy --prod (Join-Path $bundle "server")
+Write-Host "[launcher] bundle server (dist + npm install --omit=dev)..."
+$serverBundle = Join-Path $bundle "server"
+New-Item -ItemType Directory -Force -Path $serverBundle | Out-Null
+
+$serverDist = Join-Path $repoRoot "packages\server\dist"
+if (!(Test-Path $serverDist)) {
+  throw "server dist 不存在：$serverDist（请确认 pnpm -C repoRoot --filter @aip/server build 已成功）"
+}
+Copy-Item -Recurse -Force $serverDist (Join-Path $serverBundle "dist")
+Copy-Item -Force (Join-Path $repoRoot "packages\server\package.json") (Join-Path $serverBundle "package.json")
+
+Push-Location $serverBundle
+try {
+  # 生成不依赖 pnpm symlink/junction 的 node_modules（zip 解压后也能正常运行）
+  npm install --omit=dev --no-audit --no-fund
+} finally {
+  Pop-Location
+}
 
 Write-Host "[launcher] copy web dist..."
 $webDist = Join-Path $repoRoot "packages\web\dist"
