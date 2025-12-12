@@ -108,13 +108,14 @@ async function main() {
   await app.whenReady();
 
   const cfg = loadConfig();
-  let rootPath = cfg.rootPath;
+  let rootPath: string | undefined = cfg.rootPath;
   if (!rootPath) {
-    rootPath = await chooseRootPath();
-    if (!rootPath) {
+    const chosen = await chooseRootPath();
+    if (!chosen) {
       app.quit();
       return;
     }
+    rootPath = chosen;
     saveConfig({ ...cfg, rootPath });
   }
 

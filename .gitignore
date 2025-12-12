@@ -4,4 +4,14 @@ dist
 .data
 *.log
 
+# workspace 子包产物
+packages/*/dist
+packages/*/.data
+packages/desktop/resources
+packages/desktop/dist-win
+
+# Vite cache
+packages/web/node_modules/.vite
+packages/web/node_modules/.vite-temp
+
 

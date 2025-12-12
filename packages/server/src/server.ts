@@ -58,8 +58,7 @@ export function createServer({ db, rootPath, webDistPath, indexManager }: Create
     reply.raw.setHeader("Cache-Control", "no-cache, no-transform");
     reply.raw.setHeader("Connection", "keep-alive");
     // 防止 Fastify 自动结束响应
-    // @ts-expect-error fastify reply has hijack()
-    reply.hijack();
+    (reply as any).hijack?.();
 
     const send = (s: any) => {
       reply.raw.write(`event: status\ndata: ${JSON.stringify(s)}\n\n`);
