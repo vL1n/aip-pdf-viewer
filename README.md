@@ -75,23 +75,20 @@ pnpm --filter @aip/server start -- --root "/xxx/xxx/eaip/20251201" --port 3000
 
 打开：`http://localhost:3000`
 
-## 打包 Windows 可执行文件（Electron）
+## 打包 Windows 便携版（无安装、无 Electron）
 
-建议在 **Windows** 上执行打包（避免跨平台 native 依赖问题）。
+会生成一个 zip：解压后双击 `aip-launcher.exe`，它会通过内置 Node 启动后端并自动打开浏览器。
 
-1) 安装依赖：
+建议在 **Windows x64** 上执行打包。
 
 ```bash
 pnpm install
-```
-
-2) 打包（输出到 `packages/desktop/dist-win/`）：
-
-```bash
 pnpm dist:win
 ```
 
-3) 运行后第一次启动会弹窗让你选择航图目录；之后可在菜单 **文件 → 选择航图目录…** 重新选择。
+产物：`packages/launcher/dist-win/AIP-PDF-Viewer-win-x64.zip`
+
+说明：双击 `aip-launcher.exe` 后**每次都会询问航图根目录**（会显示上次记录，回车可复用）。如需跳过询问，可用命令行传 `--root <path>` 或设置环境变量 `AIP_ROOT`。
 
 ## 备注
 

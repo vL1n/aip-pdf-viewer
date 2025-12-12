@@ -1,4 +1,6 @@
-packages:
-  - "packages/*"
+mi ngipackages:
+  - "packages/server"
+  - "packages/web"
+  - "packages/launcher"
 
 

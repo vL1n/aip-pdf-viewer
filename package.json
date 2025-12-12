@@ -7,7 +7,7 @@
     "dev:split": "pnpm -r dev",
     "build": "pnpm -r build",
     "start": "pnpm --filter @aip/server start",
-    "dist:win": "pnpm --filter @aip/desktop dist:win",
+    "dist:win": "pnpm --filter @aip/launcher dist:win",
     "typecheck": "pnpm -r typecheck"
   }
 }

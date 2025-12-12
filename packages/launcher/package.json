@@ -1,0 +1,10 @@
+{
+  "name": "@aip/launcher",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dist:win": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/dist-win.ps1"
+  }
+}
+
+
