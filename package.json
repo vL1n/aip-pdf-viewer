@@ -1,0 +1,15 @@
+{
+  "name": "naip-pdf-viewer",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:split": "pnpm -r dev",
+    "build": "pnpm -r build",
+    "start": "pnpm --filter @naip/server start",
+    "dist:win": "pnpm --filter @naip/desktop dist:win",
+    "typecheck": "pnpm -r typecheck"
+  }
+}
+
+
