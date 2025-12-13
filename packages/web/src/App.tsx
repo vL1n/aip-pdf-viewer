@@ -56,6 +56,7 @@ export function App() {
   const [treeError, setTreeError] = useState<string | null>(null);
 
   const [openedFileId, setOpenedFileId] = useState<number | null>(null);
+  const [chartGroupFilter, setChartGroupFilter] = useState<string>("全部");
 
   const { token } = theme.useToken();
   // 注意：defaultLayoutPlugin 内部会用到 React Hooks，因此不能放在 useMemo 回调里；
@@ -154,11 +155,6 @@ export function App() {
         });
         setAirports(sorted);
         setAirportsError(null);
-        if (!selectedIcao && sorted.length) {
-          // 默认优先选择有图的机场；如果全部为 0，再退化为第一个
-          const preferred = sorted.find((a) => Number((a as any)?.fileCount ?? 0) > 0) ?? sorted[0]!;
-          setSelectedIcao(preferred.icao);
-        }
       } catch (e: any) {
         setAirportsError(e?.message || String(e));
       } finally {
@@ -187,6 +183,51 @@ export function App() {
   }, [selectedIcao]);
 
   const sidebarTree = useMemo(() => {
+    const isAll = chartGroupFilter === "全部";
+
+    const getDigitGroup = (n: Extract<TreeNode, { type: "file" }>): string => {
+      // 优先用 chartPage（例如 0C-01），否则退化用文件名
+      const raw = String(n.chartPage || n.name || "").trim();
+      const first = raw[0] || "";
+      if (first >= "0" && first <= "9") return first;
+      return "其他";
+    };
+
+    const applyFilterOnly = (nodes: TreeNode[]): TreeNode[] => {
+      const out: TreeNode[] = [];
+      for (const n of nodes) {
+        if (n.type === "dir") {
+          const nextChildren = applyFilterOnly(n.children);
+          if (nextChildren.length) out.push({ ...n, children: nextChildren });
+        } else {
+          const g = getDigitGroup(n);
+          if (isAll || g === chartGroupFilter) out.push(n);
+        }
+      }
+      return out;
+    };
+
+    const filtered = applyFilterOnly(tree);
+
+    const groupColors = [
+      "magenta",
+      "red",
+      "volcano",
+      "orange",
+      "gold",
+      "lime",
+      "green",
+      "cyan",
+      "blue",
+      "geekblue"
+    ] as const;
+    const getGroupColor = (g: string) => {
+      if (g === "其他") return "#8c8c8c";
+      const n = Number(g);
+      if (!Number.isNaN(n) && n >= 0 && n <= 9) return groupColors[n];
+      return "#8c8c8c";
+    };
+
     function toData(nodes: TreeNode[]): DataNode[] {
       return nodes.map((n) => {
         if (n.type === "dir") {
@@ -200,44 +241,95 @@ export function App() {
             children: toData(n.children)
           };
         }
+        const g = getDigitGroup(n);
+        const gColor = getGroupColor(g);
         const meta = (
-          <div className="treeFileTitle">
-            <div className="treeFileTitleLine">
-              <Typography.Text strong ellipsis={{ tooltip: n.name }}>
+          <div style={{ width: "100%", minWidth: 0 }}>
+            {/* 第一行：icon + 标题 */}
+            <Space size={8} align="center" style={{ width: "100%", minWidth: 0 }}>
+              <FilePdfOutlined />
+              <Typography.Text strong ellipsis={{ tooltip: n.name }} style={{ minWidth: 0, flex: "1 1 auto" }}>
                 {n.name}
               </Typography.Text>
-            </div>
-            <div className="treeFileTagLine">
+            </Space>
+            {/* 第二行：tags（可换行，不与标题同一行） */}
+            <div style={{ marginTop: 6 }}>
               <Space size={[6, 6]} wrap>
+                <Tag color={gColor as any} style={{ marginInlineEnd: 0 }}>
+                  {g}
+                </Tag>
                 {n.chartName ? (
                   <Tag color="blue" style={{ marginInlineEnd: 0 }}>
                     {n.chartName}
                   </Tag>
                 ) : null}
-                {n.chartType ? (
-                  <Tag style={{ marginInlineEnd: 0, opacity: 0.9 }}>{n.chartType}</Tag>
-                ) : null}
+                {n.chartType ? <Tag style={{ marginInlineEnd: 0, opacity: 0.9 }}>{n.chartType}</Tag> : null}
                 {n.isSup ? (
                   <Tag color="orange" style={{ marginInlineEnd: 0 }}>
                     SUP
                   </Tag>
                 ) : null}
-                {n.chartPage ? (
-                  <Tag style={{ marginInlineEnd: 0, opacity: 0.75 }}>{n.chartPage}</Tag>
-                ) : null}
+                {n.chartPage ? <Tag style={{ marginInlineEnd: 0, opacity: 0.75 }}>{n.chartPage}</Tag> : null}
               </Space>
             </div>
           </div>
         );
         return {
           key: `f:${n.id}`,
-          icon: <FilePdfOutlined />,
           title: meta,
           isLeaf: true
         };
       });
     }
-    return toData(tree);
+    return toData(filtered);
+  }, [tree, chartGroupFilter]);
+
+  const chartGroupTags = useMemo(() => {
+    const counts = new Map<string, number>();
+    const getDigitGroup = (n: Extract<TreeNode, { type: "file" }>): string => {
+      const raw = String(n.chartPage || n.name || "").trim();
+      const first = raw[0] || "";
+      if (first >= "0" && first <= "9") return first;
+      return "其他";
+    };
+    const walk = (nodes: TreeNode[]) => {
+      for (const n of nodes) {
+        if (n.type === "file") {
+          const g = getDigitGroup(n);
+          counts.set(g, (counts.get(g) || 0) + 1);
+        } else walk(n.children);
+      }
+    };
+    walk(tree);
+    const keys = Array.from(counts.keys()).sort((a, b) => {
+      if (a === "其他") return 1;
+      if (b === "其他") return -1;
+      return a.localeCompare(b, "en", { numeric: true });
+    });
+    const groupColors = [
+      "magenta",
+      "red",
+      "volcano",
+      "orange",
+      "gold",
+      "lime",
+      "green",
+      "cyan",
+      "blue",
+      "geekblue"
+    ] as const;
+    const getGroupColor = (g: string) => {
+      if (g === "全部") return "default";
+      if (g === "其他") return "#8c8c8c";
+      const n = Number(g);
+      if (!Number.isNaN(n) && n >= 0 && n <= 9) return groupColors[n];
+      return "#8c8c8c";
+    };
+    const total = Array.from(counts.values()).reduce((s, c) => s + c, 0);
+    return [
+      { key: "全部", count: total, color: getGroupColor("全部") },
+      ...keys.map((k) => ({ key: k, count: counts.get(k)!, color: getGroupColor(k) }))
+    ];
   }, [tree]);
 
   const progressPercent = useMemo(() => {
@@ -247,53 +339,107 @@ export function App() {
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <Layout.Header
-          style={{
-            flex: "0 0 auto",
-            display: "flex",
-            alignItems: "center",
-            flexWrap: "nowrap",
-            whiteSpace: "nowrap",
-            height: 64,
-            lineHeight: "normal",
-            paddingInline: 12,
-            background: token.colorBgElevated,
-            borderBottom: `1px solid ${token.colorBorderSecondary}`
-          }}
-        >
-          <Space size={12} align="center" style={{ width: "100%", justifyContent: "space-between", minWidth: 0 }}>
-            <Space size={12} align="center" style={{ minWidth: 0, overflow: "hidden" }}>
-              <Typography.Text strong ellipsis style={{ minWidth: 0 }}>
-                AIP PDF Viewer
-              </Typography.Text>
-              <Divider type="vertical" style={{ height: 24, marginInline: 4 }} />
-            </Space>
-
-            <Space
-              size={12}
-              align="center"
-              style={{ minWidth: 0, justifyContent: "flex-end", flexWrap: "nowrap" }}
+        {/* 首次进入：先选择机场，再展示主界面 */}
+        {ready && !selectedIcao ? (
+          <div
+            style={{
+              flex: "1 1 auto",
+              minHeight: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 24,
+              background: token.colorBgLayout
+            }}
+          >
+            <div
+              style={{
+                width: "min(720px, 92vw)",
+                background: token.colorBgContainer,
+                border: `1px solid ${token.colorBorderSecondary}`,
+                borderRadius: token.borderRadiusLG,
+                padding: 20
+              }}
             >
-              <Button
-                type="text"
-                aria-label={siderCollapsed ? "展开侧边栏" : "收起侧边栏"}
-                icon={siderCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-                onClick={() => setSiderCollapsed((v) => !v)}
-              />
-              <Select
-                style={{ width: 280, maxWidth: "35vw", flex: "0 1 280px" }}
-                value={selectedIcao || undefined}
-                onChange={(v: string) => setSelectedIcao(v)}
-                loading={airportsLoading}
-                disabled={!ready || airports.length === 0}
-                showSearch
-                optionFilterProp="label"
-                options={airports.map((a) => ({
-                  value: a.icao,
-                  label: `${a.icao} ${a.name ? `- ${a.name}` : ""} (${a.fileCount})`
-                }))}
-                placeholder="选择 ICAO"
-              />
+              <Space direction="vertical" style={{ width: "100%" }} size={12}>
+                <Typography.Title level={4} style={{ margin: 0 }}>
+                  请选择机场
+                </Typography.Title>
+                <Typography.Text type="secondary">
+                  选择 ICAO 后进入目录树与 PDF 浏览。
+                </Typography.Text>
+
+                {airportsError ? <Alert type="error" showIcon message={`机场列表错误：${airportsError}`} /> : null}
+
+                <Select
+                  style={{ width: "100%" }}
+                  value={undefined}
+                  onChange={(v: string | undefined) => setSelectedIcao(v || "")}
+                  loading={airportsLoading}
+                  disabled={airportsLoading || airports.length === 0}
+                  showSearch
+                  allowClear
+                  optionFilterProp="label"
+                  options={airports.map((a) => ({
+                    value: a.icao,
+                    label: `${a.icao} ${a.name ? `- ${a.name}` : ""} (${a.fileCount})`
+                  }))}
+                  placeholder={airportsLoading ? "正在加载机场列表…" : "选择 ICAO"}
+                />
+              </Space>
+            </div>
+          </div>
+        ) : null}
+
+        {/* 未选择机场时不展示 Header */}
+        {selectedIcao ? (
+          <Layout.Header
+            style={{
+              flex: "0 0 auto",
+              display: "flex",
+              alignItems: "center",
+              flexWrap: "nowrap",
+              whiteSpace: "nowrap",
+              height: 64,
+              lineHeight: "normal",
+              paddingInline: 12,
+              background: token.colorBgElevated,
+              borderBottom: `1px solid ${token.colorBorderSecondary}`
+            }}
+          >
+            <Space size={12} align="center" style={{ width: "100%", justifyContent: "space-between", minWidth: 0 }}>
+              <Space size={12} align="center" style={{ minWidth: 0, overflow: "hidden" }}>
+                <Button
+                  type="text"
+                  aria-label={siderCollapsed ? "展开侧边栏" : "收起侧边栏"}
+                  icon={siderCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+                  onClick={() => setSiderCollapsed((v) => !v)}
+                />
+                <Typography.Text strong ellipsis style={{ minWidth: 0 }}>
+                  Charts Viewer
+                </Typography.Text>
+              </Space>
+
+              <Space
+                size={12}
+                align="center"
+                style={{ minWidth: 0, justifyContent: "flex-end", flexWrap: "nowrap" }}
+              >
+                <Select
+                  style={{ width: 280, maxWidth: "35vw", flex: "0 1 280px" }}
+                  value={selectedIcao || undefined}
+                  onChange={(v: string | undefined) => setSelectedIcao(v || "")}
+                  loading={airportsLoading}
+                  disabled={!ready || airports.length === 0}
+                  showSearch
+                  allowClear
+                  optionFilterProp="label"
+                  options={airports.map((a) => ({
+                    value: a.icao,
+                    label: `${a.icao} ${a.name ? `- ${a.name}` : ""} (${a.fileCount})`
+                  }))}
+                  placeholder="选择 ICAO"
+                />
 
               {openedFileId ? (
                 <Tooltip title="新窗口打开">
@@ -310,7 +456,8 @@ export function App() {
               ) : null}
             </Space>
           </Space>
-        </Layout.Header>
+          </Layout.Header>
+        ) : null}
 
         {!ready ? (
           <div
@@ -348,6 +495,8 @@ export function App() {
           </div>
         ) : null}
 
+        {/* 未选中机场时不展示主界面 */}
+        {ready && !selectedIcao ? null : (
         <Layout style={{ flex: "1 1 auto", minHeight: 0, height: "100%" }}>
           <Layout.Sider
             width={420}
@@ -359,34 +508,78 @@ export function App() {
             theme="light"
             style={{ borderRight: `1px solid ${token.colorBorderSecondary}`, overflow: "hidden", height: "100%" }}
           >
-            <div style={{ height: "100%", overflowY: "auto", overflowX: "hidden", padding: 12 }}>
-              <Space direction="vertical" style={{ width: "100%" }} size={12}>
-                <Space align="center" style={{ width: "100%", justifyContent: "space-between" }}>
-                  <Typography.Text strong>目录树</Typography.Text>
+            <div
+              style={{
+                height: "100%",
+                minHeight: 0,
+                overflow: "hidden",
+                padding: 12,
+                display: "flex",
+                flexDirection: "column",
+                gap: 12
+              }}
+            >
+              {/* 固定区：标题 + Tags（不随目录树滚动） */}
+              <div style={{ flex: "0 0 auto" }}>
+                <Space direction="vertical" style={{ width: "100%" }} size={12}>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: 6,
+                      paddingBottom: 8,
+                      borderBottom: `1px solid ${token.colorBorderSecondary}`
+                    }}
+                  >
+                    {chartGroupTags.map((g) => (
+                      <Tag
+                        key={g.key}
+                        color={g.color as any}
+                        onClick={() => setChartGroupFilter(g.key)}
+                        style={{
+                          marginInlineEnd: 0,
+                          cursor: "pointer",
+                          userSelect: "none",
+                          opacity: chartGroupFilter === g.key ? 1 : 0.85,
+                          outline: chartGroupFilter === g.key ? `2px solid ${token.colorPrimary}` : "none",
+                          outlineOffset: 1
+                        }}
+                      >
+                        {g.key}
+                        {typeof g.count === "number" ? (
+                          <span style={{ marginLeft: 6, opacity: 0.75 }}>({g.count})</span>
+                        ) : null}
+                      </Tag>
+                    ))}
+                  </div>
                 </Space>
+              </div>
 
-                {airportsError ? <Alert type="error" showIcon message={`机场列表错误：${airportsError}`} /> : null}
-                {treeError ? <Alert type="error" showIcon message={`树加载错误：${treeError}`} /> : null}
-                <Spin spinning={treeLoading}>
-                  {tree.length === 0 && !treeLoading ? (
-                    <Empty description="没有找到 PDF" />
-                  ) : (
-                    <Tree
-                      showIcon
-                      defaultExpandAll
-                      blockNode
-                      treeData={sidebarTree}
-                      onSelect={(keys: React.Key[]) => {
-                        const k = String(keys[0] ?? "");
-                        if (k.startsWith("f:")) {
-                          const id = Number(k.slice(2));
-                          if (!Number.isNaN(id)) setOpenedFileId(id);
-                        }
-                      }}
-                    />
-                  )}
-                </Spin>
-              </Space>
+              {/* 滚动区：错误提示 + 目录树 */}
+              <div style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
+                <Space direction="vertical" style={{ width: "100%" }} size={12}>
+                  {airportsError ? <Alert type="error" showIcon message={`机场列表错误：${airportsError}`} /> : null}
+                  {treeError ? <Alert type="error" showIcon message={`树加载错误：${treeError}`} /> : null}
+                  <Spin spinning={treeLoading}>
+                    {tree.length === 0 && !treeLoading ? (
+                      <Empty description="没有找到 PDF" />
+                    ) : (
+                      <Tree
+                        defaultExpandAll
+                        blockNode
+                        treeData={sidebarTree}
+                        onSelect={(keys: React.Key[]) => {
+                          const k = String(keys[0] ?? "");
+                          if (k.startsWith("f:")) {
+                            const id = Number(k.slice(2));
+                            if (!Number.isNaN(id)) setOpenedFileId(id);
+                          }
+                        }}
+                      />
+                    )}
+                  </Spin>
+                </Space>
+              </div>
             </div>
           </Layout.Sider>
 
@@ -448,6 +641,7 @@ export function App() {
             </Layout>
           </Layout.Content>
         </Layout>
+        )}
     </div>
   );
 }

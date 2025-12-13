@@ -11,13 +11,13 @@ const program = new Command();
 
 program
   .name("aip-server")
-  .option("--root <path>", "扫描入口目录（会递归扫描 .pdf）", process.env.AIP_ROOT || process.env.NAIP_ROOT || "")
-  .option("--db <path>", "SQLite 索引文件路径", process.env.AIP_DB || process.env.NAIP_DB || path.resolve(".data/index.sqlite"))
+  .option("--root <path>", "扫描入口目录（会递归扫描 .pdf）", process.env.AIP_ROOT || process.env.EAIP_ROOT || "")
+  .option("--db <path>", "SQLite 索引文件路径", process.env.AIP_DB || process.env.EAIP_DB || path.resolve(".data/index.sqlite"))
   .option("--rebuild-db", "删除旧索引库并重建（遇到损坏/结构变更时用）", false)
   .option("--port <port>", "HTTP 端口", (v) => parseInt(v, 10), Number(process.env.PORT || 13001))
   .option("--host <host>", "HTTP 监听地址", process.env.HOST || "0.0.0.0")
-  .option("--serve-web", "生产模式：同时静态托管 web/dist", Boolean(process.env.AIP_SERVE_WEB || process.env.NAIP_SERVE_WEB || false))
-  .option("--web-dist <path>", "web 的 dist 目录（配合 --serve-web）", process.env.AIP_WEB_DIST || process.env.NAIP_WEB_DIST || "");
+  .option("--serve-web", "生产模式：同时静态托管 web/dist", Boolean(process.env.AIP_SERVE_WEB || process.env.EAIP_SERVE_WEB || false))
+  .option("--web-dist <path>", "web 的 dist 目录（配合 --serve-web）", process.env.AIP_WEB_DIST || process.env.EAIP_WEB_DIST || "");
 
 async function main() {
   const opts = program.parse(process.argv).opts<{

@@ -55,7 +55,7 @@ static class Program
     {
         while (true)
         {
-            Console.WriteLine("请输入航图 PDF 根目录（例如：D:\\\\Aero\\\\2512naip）。直接回车使用上次记录：");
+            Console.WriteLine("请输入航图 PDF 根目录（例如：D:\\\\Aero\\\\2512eaip）。直接回车使用上次记录：");
             if (!string.IsNullOrWhiteSpace(defaultValue))
                 Console.WriteLine($"[默认] {defaultValue}");
 

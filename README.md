@@ -2,8 +2,8 @@
 
 你给的数据目录结构（示例）：
 
-- `.../2512naip/Terminal/<ICAO>/`：机场四字码目录，内部是 PDF 航图与 `Charts.csv`
-- `.../2512naip/Terminal/Airports.csv`：机场 ICAO -> 中文名/管理局
+- `.../2512eaip/Terminal/<ICAO>/`：机场四字码目录，内部是 PDF 航图与 `Charts.csv`
+- `.../2512eaip/Terminal/Airports.csv`：机场 ICAO -> 中文名/管理局
 
 本项目实现：
 
