@@ -4,26 +4,19 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   apiAirports,
   apiIndexStatus,
-  apiRebuildIndex,
-  apiSearch,
   apiTree,
   pdfUrl,
   type AirportRow,
   type IndexStatus,
-  type SearchItem,
   type TreeNode
 } from "./api";
 import {
   Alert,
   Button,
-  Collapse,
   Divider,
   Empty,
   Grid,
-  Input,
   Layout,
-  List,
-  message,
   Progress,
   Select,
   Space,
@@ -38,15 +31,11 @@ import { Tree } from "antd";
 import {
   FilePdfOutlined,
   MenuFoldOutlined,
-  MenuUnfoldOutlined,
-  ReloadOutlined,
-  SearchOutlined
+  MenuUnfoldOutlined
 } from "@ant-design/icons";
 import { SpecialZoomLevel, Viewer, Worker } from "@react-pdf-viewer/core";
 import { defaultLayoutPlugin } from "@react-pdf-viewer/default-layout";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-
-type Mode = "tree" | "search";
 
 export function App() {
   const screens = Grid.useBreakpoint();
@@ -65,12 +54,6 @@ export function App() {
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [treeLoading, setTreeLoading] = useState(false);
   const [treeError, setTreeError] = useState<string | null>(null);
-
-  const [query, setQuery] = useState("");
-  const [mode, setMode] = useState<Mode>("tree");
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
-  const [searchItems, setSearchItems] = useState<SearchItem[]>([]);
 
   const [openedFileId, setOpenedFileId] = useState<number | null>(null);
 
@@ -159,10 +142,23 @@ export function App() {
       try {
         setAirportsLoading(true);
         const res = await apiAirports();
-        const list = (res as any)?.airports ?? [];
-        setAirports(Array.isArray(list) ? list : []);
+        const raw = (res as any)?.airports ?? [];
+        const list: AirportRow[] = Array.isArray(raw) ? (raw as AirportRow[]) : [];
+        const sorted = [...list].sort((a, b) => {
+          const ac = Number((a as any)?.fileCount ?? 0);
+          const bc = Number((b as any)?.fileCount ?? 0);
+          const az = ac <= 0;
+          const bz = bc <= 0;
+          if (az !== bz) return az ? 1 : -1; // 没有图的机场放到最后
+          return String((a as any)?.icao ?? "").localeCompare(String((b as any)?.icao ?? ""), "en");
+        });
+        setAirports(sorted);
         setAirportsError(null);
-        if (!selectedIcao && Array.isArray(list) && list.length) setSelectedIcao(list[0]!.icao);
+        if (!selectedIcao && sorted.length) {
+          // 默认优先选择有图的机场；如果全部为 0，再退化为第一个
+          const preferred = sorted.find((a) => Number((a as any)?.fileCount ?? 0) > 0) ?? sorted[0]!;
+          setSelectedIcao(preferred.icao);
+        }
       } catch (e: any) {
         setAirportsError(e?.message || String(e));
       } finally {
@@ -189,18 +185,6 @@ export function App() {
       }
     })();
   }, [selectedIcao]);
-
-  const groupedSearch = useMemo(() => {
-    const map = new Map<string, SearchItem[]>();
-    for (const it of searchItems) {
-      const key = it.icao || "UNKNOWN";
-      const arr = map.get(key) || [];
-      arr.push(it);
-      map.set(key, arr);
-    }
-    const keys = Array.from(map.keys()).sort();
-    return keys.map((k) => ({ icao: k, items: map.get(k)! }));
-  }, [searchItems]);
 
   const sidebarTree = useMemo(() => {
     function toData(nodes: TreeNode[]): DataNode[] {
@@ -261,29 +245,6 @@ export function App() {
     return Math.floor((Math.min(indexStatus.processedPdfs, indexStatus.totalPdfs) / indexStatus.totalPdfs) * 100);
   }, [indexStatus]);
 
-  async function doSearch() {
-    if (!ready) return;
-    const q = query.trim();
-    if (!q) {
-      setMode("tree");
-      setSearchItems([]);
-      setSearchError(null);
-      return;
-    }
-    try {
-      setMode("search");
-      setSearchLoading(true);
-      const res = await apiSearch(q, selectedIcao || undefined);
-      const items = (res as any)?.items ?? [];
-      setSearchItems(Array.isArray(items) ? items : []);
-      setSearchError(null);
-    } catch (e: any) {
-      setSearchError(e?.message || String(e));
-    } finally {
-      setSearchLoading(false);
-    }
-  }
-
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <Layout.Header
@@ -333,34 +294,6 @@ export function App() {
                 }))}
                 placeholder="选择 ICAO"
               />
-
-              <Input.Search
-                style={{ flex: "1 1 520px", minWidth: 220, maxWidth: "55vw" }}
-                value={query}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setQuery(e.target.value)}
-                onSearch={() => void doSearch()}
-                allowClear
-                disabled={!ready}
-                placeholder="模糊搜索：文件名 / 航图名 / 类型 / ICAO（支持空格多词）"
-                enterButton={<SearchOutlined />}
-              />
-
-              <Button
-                icon={<ReloadOutlined />}
-                disabled={!ready}
-                onClick={() => {
-                  void (async () => {
-                    try {
-                      await apiRebuildIndex();
-                      message.success("已触发重建索引");
-                    } catch (e: any) {
-                      message.error(e?.message || "触发失败");
-                    }
-                  })();
-                }}
-              >
-                {compactHeader ? null : "重建索引"}
-              </Button>
 
               {openedFileId ? (
                 <Tooltip title="新窗口打开">
@@ -429,103 +362,30 @@ export function App() {
             <div style={{ height: "100%", overflowY: "auto", overflowX: "hidden", padding: 12 }}>
               <Space direction="vertical" style={{ width: "100%" }} size={12}>
                 <Space align="center" style={{ width: "100%", justifyContent: "space-between" }}>
-                  <Typography.Text strong>{mode === "search" ? "搜索结果" : "目录树"}</Typography.Text>
-                  <Space size={8}>
-                    <Button
-                      size="small"
-                      type="text"
-                      aria-label="收起侧边栏"
-                      icon={<MenuFoldOutlined />}
-                      onClick={() => setSiderCollapsed(true)}
-                    />
-                    <Button
-                      size="small"
-                      onClick={() => {
-                        setMode("tree");
-                        setSearchItems([]);
-                        setSearchError(null);
-                      }}
-                      disabled={mode === "tree"}
-                    >
-                      目录
-                    </Button>
-                    <Button size="small" onClick={() => setMode("search")} disabled={mode === "search"}>
-                      搜索
-                    </Button>
-                  </Space>
+                  <Typography.Text strong>目录树</Typography.Text>
                 </Space>
 
                 {airportsError ? <Alert type="error" showIcon message={`机场列表错误：${airportsError}`} /> : null}
                 {treeError ? <Alert type="error" showIcon message={`树加载错误：${treeError}`} /> : null}
-                {searchError ? <Alert type="error" showIcon message={`搜索错误：${searchError}`} /> : null}
-
-                {mode === "tree" ? (
-                  <Spin spinning={treeLoading}>
-                    {tree.length === 0 && !treeLoading ? (
-                      <Empty description="没有找到 PDF" />
-                    ) : (
-                      <Tree
-                        showIcon
-                        defaultExpandAll
-                        blockNode
-                        treeData={sidebarTree}
-                        onSelect={(keys: React.Key[]) => {
-                          const k = String(keys[0] ?? "");
-                          if (k.startsWith("f:")) {
-                            const id = Number(k.slice(2));
-                            if (!Number.isNaN(id)) setOpenedFileId(id);
-                          }
-                        }}
-                      />
-                    )}
-                  </Spin>
-                ) : (
-                  <div>
-                    <Spin spinning={searchLoading}>
-                      {groupedSearch.length === 0 && !searchLoading ? (
-                        <Empty description="没有结果" />
-                      ) : (
-                        <Collapse
-                          size="small"
-                          defaultActiveKey={groupedSearch.map((g) => g.icao)}
-                          items={groupedSearch.map((g) => ({
-                            key: g.icao,
-                            label: `${g.icao}（${g.items[0]?.airport_name || ""}） - ${g.items.length} 条`,
-                            children: (
-                              <List
-                                size="small"
-                                dataSource={g.items}
-                                renderItem={(it: SearchItem) => (
-                                  <List.Item
-                                    style={{ cursor: "pointer" }}
-                                    onClick={() => setOpenedFileId(it.id)}
-                                  >
-                                    <List.Item.Meta
-                                      title={
-                                        <Space wrap>
-                                          <Typography.Text strong>
-                                            {it.chart_name ? it.chart_name : it.filename}
-                                          </Typography.Text>
-                                          {it.chart_type ? <Tag>{it.chart_type}</Tag> : null}
-                                          {it.group_key ? <Tag color="blue">{it.group_key}</Tag> : null}
-                                        </Space>
-                                      }
-                                      description={
-                                        <Typography.Text type="secondary" className="mono">
-                                          {it.filename}
-                                        </Typography.Text>
-                                      }
-                                    />
-                                  </List.Item>
-                                )}
-                              />
-                            )
-                          }))}
-                        />
-                      )}
-                    </Spin>
-                  </div>
-                )}
+                <Spin spinning={treeLoading}>
+                  {tree.length === 0 && !treeLoading ? (
+                    <Empty description="没有找到 PDF" />
+                  ) : (
+                    <Tree
+                      showIcon
+                      defaultExpandAll
+                      blockNode
+                      treeData={sidebarTree}
+                      onSelect={(keys: React.Key[]) => {
+                        const k = String(keys[0] ?? "");
+                        if (k.startsWith("f:")) {
+                          const id = Number(k.slice(2));
+                          if (!Number.isNaN(id)) setOpenedFileId(id);
+                        }
+                      }}
+                    />
+                  )}
+                </Spin>
               </Space>
             </div>
           </Layout.Sider>
@@ -563,7 +423,9 @@ export function App() {
                         background: token.colorBgContainer
                       }}
                     >
-                      <div style={{ height: "100%", minHeight: 0, overflow: "auto" }}>
+                      {/* 让 @react-pdf-viewer 自己管理内部滚动；外层不要再包一层 overflow:auto，
+                          否则在 flex 里可能导致后续页一直处于 loading（视口/虚拟渲染判断异常）。 */}
+                      <div style={{ height: "100%", minHeight: 0, overflow: "hidden" }}>
                         <Worker
                           // Vite 下推荐用 pdfjs-dist 的 worker（无需外网 CDN）
                           workerUrl={pdfWorkerUrl}

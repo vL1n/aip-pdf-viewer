@@ -41,4 +41,13 @@ body,
   overflow-x: hidden !important;
 }
 
+/* react-pdf-viewer 在 flex 容器里需要 min-height:0，否则多页虚拟滚动可能卡在 loading */
+.rpv-default-layout__container,
+.rpv-default-layout__main,
+.rpv-default-layout__body,
+.rpv-core__viewer,
+.rpv-core__inner-container {
+  min-height: 0;
+}
+
 
