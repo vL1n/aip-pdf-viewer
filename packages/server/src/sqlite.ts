@@ -161,4 +161,15 @@ export function resetData(db: Db) {
   `);
 }
 
+export function initFavoritesSchema(db: Db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS favorites (
+      rel_path TEXT PRIMARY KEY,
+      icao TEXT,
+      created_at_ms INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_favorites_icao ON favorites(icao);
+  `);
+}
+
 

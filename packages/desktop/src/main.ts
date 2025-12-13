@@ -71,12 +71,15 @@ async function startBackend(rootPath: string) {
   const { IndexManager } = await importFrom(serverDir, "indexManager.js");
   const { createServer } = await importFrom(serverDir, "server.js");
 
-  const dbPath = path.join(app.getPath("userData"), "index.sqlite");
-  const db: Db = openDb({ dbPath });
+  const indexDbPath = path.join(app.getPath("userData"), "index.sqlite");
+  const favoritesDbPath = path.join(app.getPath("userData"), "favorites.sqlite");
+  const db: Db = openDb({ dbPath: indexDbPath });
+  const favoritesDb: Db = openDb({ dbPath: favoritesDbPath });
   const indexManager: IndexManager = new IndexManager(db);
 
   const fastifyApp = createServer({
     db,
+    favoritesDb,
     rootPath,
     webDistPath: webDir,
     indexManager

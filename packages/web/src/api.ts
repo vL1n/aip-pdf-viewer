@@ -51,6 +51,16 @@ async function getJson<T>(url: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function postJson<T>(url: string, body: any): Promise<T> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body ?? {})
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return (await res.json()) as T;
+}
+
 export async function apiAirports() {
   return await getJson<{ airports: AirportRow[] }>("/api/airports");
 }
@@ -82,6 +92,33 @@ export async function apiRebuildIndex() {
 
 export function pdfUrl(id: number) {
   return `/api/pdf/${id}`;
+}
+
+export type FavoritesExportV1 = {
+  version: 1;
+  exportedAtMs: number;
+  favorites: Array<{ rel_path: string; icao: string | null; created_at_ms: number }>;
+};
+
+export async function apiFavoriteRelPaths(icao: string) {
+  const qs = new URLSearchParams({ icao });
+  return await getJson<{ icao: string; relPaths: string[] }>(`/api/favorites/relpaths?${qs.toString()}`);
+}
+
+export async function apiFavoriteAdd(input: { fileId?: number; relPath?: string }) {
+  return await postJson<{ ok: true; relPath: string; icao: string | null }>("/api/favorites/add", input);
+}
+
+export async function apiFavoriteRemove(input: { fileId?: number; relPath?: string }) {
+  return await postJson<{ ok: true; relPath: string }>("/api/favorites/remove", input);
+}
+
+export async function apiFavoritesExport() {
+  return await getJson<FavoritesExportV1>("/api/favorites/export");
+}
+
+export async function apiFavoritesImport(payload: { mode?: "merge" | "replace"; favorites: FavoritesExportV1["favorites"] }) {
+  return await postJson<{ ok: true; mode: string; total: number }>("/api/favorites/import", payload);
 }
 
 

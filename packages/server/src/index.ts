@@ -12,7 +12,12 @@ const program = new Command();
 program
   .name("aip-server")
   .option("--root <path>", "扫描入口目录（会递归扫描 .pdf）", process.env.AIP_ROOT || process.env.EAIP_ROOT || "")
-  .option("--db <path>", "SQLite 索引文件路径", process.env.AIP_DB || process.env.EAIP_DB || path.resolve(".data/index.sqlite"))
+  .option("--db <path>", "SQLite 索引文件路径（files/airports/fts）", process.env.AIP_DB || process.env.EAIP_DB || path.resolve(".data/index.sqlite"))
+  .option(
+    "--fav-db <path>",
+    "SQLite 收藏文件路径（仅 favorites）",
+    process.env.AIP_FAV_DB || process.env.EAIP_FAV_DB || path.resolve(".data/favorites.sqlite")
+  )
   .option("--rebuild-db", "删除旧索引库并重建（遇到损坏/结构变更时用）", false)
   .option("--port <port>", "HTTP 端口", (v) => parseInt(v, 10), Number(process.env.PORT || 13001))
   .option("--host <host>", "HTTP 监听地址", process.env.HOST || "0.0.0.0")
@@ -23,6 +28,7 @@ async function main() {
   const opts = program.parse(process.argv).opts<{
     root: string;
     db: string;
+    favDb: string;
     rebuildDb: boolean;
     port: number;
     host: string;
@@ -47,6 +53,7 @@ async function main() {
     }
   }
   const db = openDb({ dbPath: opts.db });
+  const favoritesDb = openDb({ dbPath: opts.favDb });
 
   const indexManager = new IndexManager(db);
 
@@ -63,10 +70,10 @@ async function main() {
       webDistPath = fs.existsSync(c1) ? c1 : c2;
     }
   }
-  const app = createServer({ db, rootPath, webDistPath, indexManager });
+  const app = createServer({ db, favoritesDb, rootPath, webDistPath, indexManager });
 
   await app.listen({ port: opts.port, host: opts.host });
-  app.log.info({ rootPath, db: opts.db }, "server started");
+  app.log.info({ rootPath, db: opts.db, favoritesDb: opts.favDb }, "server started");
 
   // 后台构建索引，让前端可以显示“启动进度条”
   void indexManager.start(rootPath);

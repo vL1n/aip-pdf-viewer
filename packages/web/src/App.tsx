@@ -1,8 +1,13 @@
 /* @refresh reset */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   apiAirports,
+  apiFavoriteAdd,
+  apiFavoriteRelPaths,
+  apiFavoriteRemove,
+  apiFavoritesExport,
+  apiFavoritesImport,
   apiIndexStatus,
   apiTree,
   pdfUrl,
@@ -17,6 +22,7 @@ import {
   Empty,
   Grid,
   Layout,
+  message,
   Progress,
   Select,
   Space,
@@ -29,9 +35,13 @@ import {
 import type { DataNode } from "antd/es/tree";
 import { Tree } from "antd";
 import {
+  DownloadOutlined,
   FilePdfOutlined,
   MenuFoldOutlined,
-  MenuUnfoldOutlined
+  MenuUnfoldOutlined,
+  StarFilled,
+  StarOutlined,
+  UploadOutlined
 } from "@ant-design/icons";
 import { SpecialZoomLevel, Viewer, Worker } from "@react-pdf-viewer/core";
 import { defaultLayoutPlugin } from "@react-pdf-viewer/default-layout";
@@ -57,6 +67,10 @@ export function App() {
 
   const [openedFileId, setOpenedFileId] = useState<number | null>(null);
   const [chartGroupFilter, setChartGroupFilter] = useState<string>("全部");
+  const [viewMode, setViewMode] = useState<"全部" | "收藏">("全部");
+  const [favoriteRelPaths, setFavoriteRelPaths] = useState<Set<string>>(new Set());
+  const [favoritesLoading, setFavoritesLoading] = useState(false);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const { token } = theme.useToken();
   // 注意：defaultLayoutPlugin 内部会用到 React Hooks，因此不能放在 useMemo 回调里；
@@ -182,6 +196,84 @@ export function App() {
     })();
   }, [selectedIcao]);
 
+  useEffect(() => {
+    if (!ready) return;
+    if (!selectedIcao) return;
+    (async () => {
+      try {
+        setFavoritesLoading(true);
+        const res = await apiFavoriteRelPaths(selectedIcao);
+        const list = Array.isArray((res as any)?.relPaths) ? ((res as any).relPaths as string[]) : [];
+        setFavoriteRelPaths(new Set(list));
+      } catch {
+        // 收藏不是核心功能，失败时不阻塞 UI
+        setFavoriteRelPaths(new Set());
+      } finally {
+        setFavoritesLoading(false);
+      }
+    })();
+  }, [ready, selectedIcao]);
+
+  const toggleFavoriteByNode = async (n: Extract<TreeNode, { type: "file" }>) => {
+    const relPath = n.relPath;
+    const isFav = favoriteRelPaths.has(relPath);
+    try {
+      if (isFav) {
+        await apiFavoriteRemove({ relPath });
+        setFavoriteRelPaths((prev) => {
+          const next = new Set(prev);
+          next.delete(relPath);
+          return next;
+        });
+      } else {
+        await apiFavoriteAdd({ fileId: n.id });
+        setFavoriteRelPaths((prev) => new Set(prev).add(relPath));
+      }
+    } catch (e: any) {
+      void message.error(`收藏操作失败：${e?.message || String(e)}`);
+    }
+  };
+
+  const exportFavorites = async () => {
+    try {
+      const data = await apiFavoritesExport();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const ts = new Date().toISOString().replaceAll(":", "").replaceAll("-", "").slice(0, 15);
+      a.download = `favorites-${ts}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      void message.success("已导出收藏");
+    } catch (e: any) {
+      void message.error(`导出失败：${e?.message || String(e)}`);
+    }
+  };
+
+  const importFavoritesFromFile = async (file: File) => {
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as any;
+      const favorites = Array.isArray(parsed?.favorites) ? parsed.favorites : null;
+      if (!favorites) throw new Error("文件格式不正确：缺少 favorites 数组");
+      await apiFavoritesImport({ mode: "merge", favorites });
+      // 仅刷新当前机场收藏标记
+      if (selectedIcao) {
+        const res = await apiFavoriteRelPaths(selectedIcao);
+        const list = Array.isArray((res as any)?.relPaths) ? ((res as any).relPaths as string[]) : [];
+        setFavoriteRelPaths(new Set(list));
+      }
+      void message.success("已导入收藏（合并模式）");
+    } catch (e: any) {
+      void message.error(`导入失败：${e?.message || String(e)}`);
+    } finally {
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  };
+
   const sidebarTree = useMemo(() => {
     const isAll = chartGroupFilter === "全部";
 
@@ -201,7 +293,9 @@ export function App() {
           if (nextChildren.length) out.push({ ...n, children: nextChildren });
         } else {
           const g = getDigitGroup(n);
-          if (isAll || g === chartGroupFilter) out.push(n);
+          const matchGroup = isAll || g === chartGroupFilter;
+          const matchFav = viewMode === "全部" || favoriteRelPaths.has(n.relPath);
+          if (matchGroup && matchFav) out.push(n);
         }
       }
       return out;
@@ -243,15 +337,28 @@ export function App() {
         }
         const g = getDigitGroup(n);
         const gColor = getGroupColor(g);
+        const isFav = favoriteRelPaths.has(n.relPath);
         const meta = (
           <div style={{ width: "100%", minWidth: 0 }}>
             {/* 第一行：icon + 标题 */}
-            <Space size={8} align="center" style={{ width: "100%", minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0 }}>
               <FilePdfOutlined />
               <Typography.Text strong ellipsis={{ tooltip: n.name }} style={{ minWidth: 0, flex: "1 1 auto" }}>
                 {n.name}
               </Typography.Text>
-            </Space>
+              <Tooltip title={isFav ? "取消收藏" : "收藏"}>
+                <span
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    void toggleFavoriteByNode(n);
+                  }}
+                  style={{ display: "inline-flex", alignItems: "center" }}
+                >
+                  {isFav ? <StarFilled style={{ color: token.colorWarning }} /> : <StarOutlined style={{ color: token.colorTextSecondary }} />}
+                </span>
+              </Tooltip>
+            </div>
             {/* 第二行：tags（可换行，不与标题同一行） */}
             <div style={{ marginTop: 6 }}>
               <Space size={[6, 6]} wrap>
@@ -282,7 +389,7 @@ export function App() {
       });
     }
     return toData(filtered);
-  }, [tree, chartGroupFilter]);
+  }, [tree, chartGroupFilter, viewMode, favoriteRelPaths, token.colorText, token.colorTextSecondary, token.colorWarning]);
 
   const chartGroupTags = useMemo(() => {
     const counts = new Map<string, number>();
@@ -295,6 +402,7 @@ export function App() {
     const walk = (nodes: TreeNode[]) => {
       for (const n of nodes) {
         if (n.type === "file") {
+          if (viewMode === "收藏" && !favoriteRelPaths.has(n.relPath)) continue;
           const g = getDigitGroup(n);
           counts.set(g, (counts.get(g) || 0) + 1);
         } else walk(n.children);
@@ -330,7 +438,11 @@ export function App() {
       { key: "全部", count: total, color: getGroupColor("全部") },
       ...keys.map((k) => ({ key: k, count: counts.get(k)!, color: getGroupColor(k) }))
     ];
-  }, [tree]);
+  }, [tree, viewMode, favoriteRelPaths]);
+
+  const favoritesCount = useMemo(() => {
+    return favoriteRelPaths.size;
+  }, [favoriteRelPaths]);
 
   const progressPercent = useMemo(() => {
     if (!indexStatus?.totalPdfs || indexStatus.totalPdfs <= 0) return 0;
@@ -441,6 +553,18 @@ export function App() {
                   placeholder="选择 ICAO"
                 />
 
+                <Button icon={<DownloadOutlined />} onClick={() => void exportFavorites()}>
+                  {compactHeader ? null : "导出收藏"}
+                </Button>
+                <Button
+                  icon={<UploadOutlined />}
+                  onClick={() => {
+                    importInputRef.current?.click();
+                  }}
+                >
+                  {compactHeader ? null : "导入收藏"}
+                </Button>
+
               {openedFileId ? (
                 <Tooltip title="新窗口打开">
                   <Button
@@ -458,6 +582,18 @@ export function App() {
           </Space>
           </Layout.Header>
         ) : null}
+
+        <input
+          ref={importInputRef}
+          type="file"
+          accept="application/json"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            void importFavoritesFromFile(f);
+          }}
+        />
 
         {!ready ? (
           <div
@@ -522,6 +658,48 @@ export function App() {
               {/* 固定区：标题 + Tags（不随目录树滚动） */}
               <div style={{ flex: "0 0 auto" }}>
                 <Space direction="vertical" style={{ width: "100%" }} size={12}>
+                  {/* 收藏筛选（固定区，与你反馈的“分组 Tag 区域”在同一块） */}
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: 6,
+                      paddingBottom: 8,
+                      borderBottom: `1px solid ${token.colorBorderSecondary}`
+                    }}
+                  >
+                    <Tag
+                      color={viewMode === "全部" ? "blue" : "default"}
+                      onClick={() => setViewMode("全部")}
+                      style={{
+                        marginInlineEnd: 0,
+                        cursor: "pointer",
+                        userSelect: "none",
+                        opacity: viewMode === "全部" ? 1 : 0.85,
+                        outline: viewMode === "全部" ? `2px solid ${token.colorPrimary}` : "none",
+                        outlineOffset: 1
+                      }}
+                    >
+                      全部
+                    </Tag>
+                    <Tag
+                      color={viewMode === "收藏" ? "gold" : "default"}
+                      onClick={() => setViewMode("收藏")}
+                      style={{
+                        marginInlineEnd: 0,
+                        cursor: "pointer",
+                        userSelect: "none",
+                        opacity: viewMode === "收藏" ? 1 : 0.85,
+                        outline: viewMode === "收藏" ? `2px solid ${token.colorPrimary}` : "none",
+                        outlineOffset: 1
+                      }}
+                    >
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <StarFilled style={{ color: token.colorWarning }} />
+                        收藏{typeof favoritesCount === "number" ? `(${favoritesCount})` : ""}
+                      </span>
+                    </Tag>
+                  </div>
                   <div
                     style={{
                       display: "flex",

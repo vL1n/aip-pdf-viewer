@@ -8,6 +8,7 @@ import type Database from "better-sqlite3";
 
 import { buildTree } from "./tree.js";
 import type { IndexManager } from "./indexManager.js";
+import { initFavoritesSchema } from "./sqlite.js";
 
 function isInsideRoot(rootPath: string, filePath: string) {
   const root = path.resolve(rootPath);
@@ -36,16 +37,20 @@ function buildFtsMatch(q: string) {
 }
 
 export type CreateServerOptions = {
-  db: Database.Database;
+  db: Database.Database; // index db
+  favoritesDb: Database.Database;
   rootPath: string;
   webDistPath?: string;
   indexManager: IndexManager;
 };
 
-export function createServer({ db, rootPath, webDistPath, indexManager }: CreateServerOptions) {
+export function createServer({ db, favoritesDb, rootPath, webDistPath, indexManager }: CreateServerOptions) {
   const app = fastify({
     logger: true
   });
+
+  // 确保收藏表存在（独立 SQLite；不依赖索引构建是否完成）
+  initFavoritesSchema(favoritesDb);
 
   app.get("/api/health", async () => ({ ok: true }));
 
@@ -126,6 +131,113 @@ export function createServer({ db, rootPath, webDistPath, indexManager }: Create
     const strip = icao ? `Terminal/${icao}` : "";
     const tree = buildTree(items, strip);
     return { icao: icao || null, tree };
+  });
+
+  // ---- Favorites ----
+  app.get("/api/favorites/relpaths", async (req, reply) => {
+    if (!requireReady(reply)) return;
+    const q = req.query as { icao?: string };
+    const icao = (q.icao || "").toUpperCase();
+    if (!icao) return { relPaths: [] as string[] };
+
+    const favRows = favoritesDb
+      .prepare(`SELECT rel_path, created_at_ms FROM favorites ORDER BY created_at_ms DESC`)
+      .all() as Array<{ rel_path: string; created_at_ms: number }>;
+
+    const relPaths = favRows.map((r) => r.rel_path);
+    if (relPaths.length === 0) return { icao, relPaths: [] as string[] };
+
+    // indexDb 与 favoritesDb 分离，不能直接 JOIN；用 IN 分批过滤，保持 favorites 的时间顺序
+    const allowed = new Set<string>();
+    const chunkSize = 900;
+    for (let i = 0; i < relPaths.length; i += chunkSize) {
+      const chunk = relPaths.slice(i, i + chunkSize);
+      const placeholders = chunk.map(() => "?").join(", ");
+      const sql = `SELECT rel_path FROM files WHERE icao = ? AND rel_path IN (${placeholders})`;
+      const rows = db.prepare(sql).all(icao, ...chunk) as Array<{ rel_path: string }>;
+      for (const r of rows) allowed.add(r.rel_path);
+    }
+
+    const filtered = relPaths.filter((rp) => allowed.has(rp));
+    return { icao, relPaths: filtered };
+  });
+
+  app.post("/api/favorites/add", async (req, reply) => {
+    if (!requireReady(reply)) return;
+    const body = (req.body || {}) as { fileId?: number; relPath?: string };
+    const fileId = body.fileId != null ? Number(body.fileId) : null;
+    const relPath = typeof body.relPath === "string" ? body.relPath : null;
+
+    const fileRow =
+      fileId != null && !Number.isNaN(fileId)
+        ? (db.prepare(`SELECT rel_path, icao FROM files WHERE id = ?`).get(fileId) as any)
+        : relPath
+          ? (db.prepare(`SELECT rel_path, icao FROM files WHERE rel_path = ?`).get(relPath) as any)
+          : null;
+
+    if (!fileRow?.rel_path) return reply.code(400).send({ error: "invalid_file" });
+
+    favoritesDb.prepare(`INSERT OR IGNORE INTO favorites(rel_path, icao, created_at_ms) VALUES (?, ?, ?)`).run(
+      String(fileRow.rel_path),
+      fileRow.icao != null ? String(fileRow.icao) : null,
+      Date.now()
+    );
+    return { ok: true, relPath: String(fileRow.rel_path), icao: fileRow.icao ?? null };
+  });
+
+  app.post("/api/favorites/remove", async (req, reply) => {
+    if (!requireReady(reply)) return;
+    const body = (req.body || {}) as { relPath?: string; fileId?: number };
+    const relPath = typeof body.relPath === "string" ? body.relPath : null;
+    const fileId = body.fileId != null ? Number(body.fileId) : null;
+
+    let rp = relPath;
+    if (!rp && fileId != null && !Number.isNaN(fileId)) {
+      const row = db.prepare(`SELECT rel_path FROM files WHERE id = ?`).get(fileId) as any;
+      rp = row?.rel_path ? String(row.rel_path) : null;
+    }
+    if (!rp) return reply.code(400).send({ error: "invalid_rel_path" });
+
+    favoritesDb.prepare(`DELETE FROM favorites WHERE rel_path = ?`).run(rp);
+    return { ok: true, relPath: rp };
+  });
+
+  app.get("/api/favorites/export", async () => {
+    const rows = favoritesDb
+      .prepare(`SELECT rel_path, icao, created_at_ms FROM favorites ORDER BY created_at_ms DESC`)
+      .all() as Array<{ rel_path: string; icao: string | null; created_at_ms: number }>;
+    return {
+      version: 1,
+      exportedAtMs: Date.now(),
+      favorites: rows
+    };
+  });
+
+  app.post("/api/favorites/import", async (req, reply) => {
+    const body = (req.body || {}) as any;
+    const mode = String(body?.mode || "merge");
+    const favorites = Array.isArray(body?.favorites) ? (body.favorites as any[]) : null;
+    if (!favorites) return reply.code(400).send({ error: "invalid_payload" });
+
+    const tx = favoritesDb.transaction(() => {
+      initFavoritesSchema(favoritesDb);
+      if (mode === "replace") {
+        favoritesDb.prepare(`DELETE FROM favorites`).run();
+      }
+
+      const stmt = favoritesDb.prepare(`INSERT OR IGNORE INTO favorites(rel_path, icao, created_at_ms) VALUES (?, ?, ?)`);
+      for (const f of favorites) {
+        const rel_path = typeof f?.rel_path === "string" ? f.rel_path : null;
+        if (!rel_path) continue;
+        const icao = typeof f?.icao === "string" ? f.icao : null;
+        const created = Number.isFinite(Number(f?.created_at_ms)) ? Number(f.created_at_ms) : Date.now();
+        stmt.run(rel_path, icao, created);
+      }
+    });
+    tx();
+
+    const totalRow = favoritesDb.prepare(`SELECT COUNT(1) AS c FROM favorites`).get() as any;
+    return { ok: true, mode, total: totalRow?.c ?? 0 };
   });
 
   app.get("/api/search", async (req, reply) => {

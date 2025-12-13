@@ -12,9 +12,22 @@ static class Program
 
     private static string ConfigPath => Path.Combine(ConfigDir, "config.json");
 
-    private static string DbPath => Path.Combine(ConfigDir, "index.sqlite");
-
     private static string BaseDir => AppContext.BaseDirectory;
+
+    // 数据目录（exe 同级）
+    private static string DataDir => Path.Combine(BaseDir, "data");
+
+    // 索引库：可重建，默认放到 LocalAppData（避免污染安装目录）
+    private static string IndexDbPath =>
+        Environment.GetEnvironmentVariable("AIP_DB")
+        ?? Environment.GetEnvironmentVariable("EAIP_DB")
+        ?? Path.Combine(ConfigDir, "index.sqlite");
+
+    // 收藏库：需长期保留，默认放到 exe 同级 ./data/favorites.sqlite（不询问）
+    private static string FavoritesDbPath =>
+        Environment.GetEnvironmentVariable("AIP_FAV_DB")
+        ?? Environment.GetEnvironmentVariable("EAIP_FAV_DB")
+        ?? Path.Combine(DataDir, "favorites.sqlite");
 
     private static string NodeExe => Path.Combine(BaseDir, "node", "node.exe");
 
@@ -134,6 +147,8 @@ static class Program
             SaveConfig(cfg);
 
             Directory.CreateDirectory(ConfigDir);
+            Directory.CreateDirectory(Path.GetDirectoryName(IndexDbPath) ?? ConfigDir);
+            Directory.CreateDirectory(Path.GetDirectoryName(FavoritesDbPath) ?? DataDir);
 
             // 直接重建索引库（与你当前默认行为一致）
             var serverArgs = new[]
@@ -142,7 +157,8 @@ static class Program
                 "--root", root,
                 "--host", "0.0.0.0",
                 "--port", Port.ToString(),
-                "--db", DbPath,
+                "--db", IndexDbPath,
+                "--fav-db", FavoritesDbPath,
                 "--rebuild-db",
                 "--serve-web",
                 "--web-dist", WebDir
