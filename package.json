@@ -7,6 +7,8 @@
     "dev:split": "pnpm -r dev",
     "build": "pnpm -r build",
     "start": "pnpm --filter @aip/server start",
+    "docker:mac": "node scripts/docker.mjs",
+    "docker:run": "node scripts/docker.mjs --run --detach",
     "dist:win": "pnpm --filter @aip/launcher dist:win",
     "typecheck": "pnpm -r typecheck"
   }
