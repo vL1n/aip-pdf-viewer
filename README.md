@@ -90,6 +90,16 @@ pnpm dist:win
 
 说明：双击 `aip-launcher.exe` 后**每次都会询问航图根目录**（会显示上次记录，回车可复用）。如需跳过询问，可用命令行传 `--root <path>` 或设置环境变量 `AIP_ROOT`。
 
+收藏/索引数据库位置（Windows 便携版）：
+
+- 索引库（可重建）：`%LocalAppData%\aip-pdf-viewer\index.sqlite`
+- 收藏库（需保留）：`<exe同级>\data\favorites.sqlite`
+
+## mac / Windows 同构运行方式（推荐）
+
+- **mac**：推荐使用 `packages/desktop`（Electron）启动，它会在本机启动后端并打开内置窗口（不依赖 Docker）。
+- **Windows**：推荐使用 `packages/launcher` 生成的 `aip-launcher.exe`（便携版），它会在本机启动后端并打开默认浏览器。
+
 ## 备注
 
 - `Charts.csv`/`Airports.csv` 可能是 **GBK/GB18030** 编码，服务端会自动按该编码解码并入库，用于中文搜索与分组。
