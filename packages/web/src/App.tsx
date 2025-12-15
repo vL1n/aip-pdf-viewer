@@ -19,6 +19,7 @@ import {
   Alert,
   Button,
   Divider,
+  Dropdown,
   Empty,
   Grid,
   Layout,
@@ -37,6 +38,7 @@ import { Tree } from "antd";
 import {
   DownloadOutlined,
   FilePdfOutlined,
+  MoreOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   StarFilled,
@@ -177,6 +179,15 @@ export function App() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
+
+  // 切换机场时：清空筛选（收藏/分组）并关闭已打开文件
+  useEffect(() => {
+    if (!selectedIcao) return;
+    setOpenedFileId(null);
+    setViewMode("全部");
+    setChartGroupFilter("全部");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIcao]);
 
   useEffect(() => {
     if (!ready) return;
@@ -338,11 +349,19 @@ export function App() {
         const g = getDigitGroup(n);
         const gColor = getGroupColor(g);
         const isFav = favoriteRelPaths.has(n.relPath);
+        const title = (() => {
+          const parts: string[] = [];
+          if (n.chartName) parts.push(n.chartName);
+          if (n.chartType) parts.push(n.chartType);
+          if (n.isSup) parts.push("SUP");
+          if (n.chartPage) parts.push(n.chartPage);
+          if (g) parts.push(`分组:${g}`);
+          return parts.join(" · ");
+        })();
         const meta = (
           <div style={{ width: "100%", minWidth: 0 }}>
-            {/* 第一行：icon + 标题 */}
+            {/* 第一行：标题 + 星标 */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0 }}>
-              <FilePdfOutlined />
               <Typography.Text strong ellipsis={{ tooltip: n.name }} style={{ minWidth: 0, flex: "1 1 auto" }}>
                 {n.name}
               </Typography.Text>
@@ -486,7 +505,12 @@ export function App() {
                 <Select
                   style={{ width: "100%" }}
                   value={undefined}
-                  onChange={(v: string | undefined) => setSelectedIcao(v || "")}
+                  onChange={(v: string | undefined) => {
+                    setSelectedIcao(v || "");
+                    setOpenedFileId(null);
+                    setViewMode("全部");
+                    setChartGroupFilter("全部");
+                  }}
                   loading={airportsLoading}
                   disabled={airportsLoading || airports.length === 0}
                   showSearch
@@ -540,7 +564,12 @@ export function App() {
                 <Select
                   style={{ width: 280, maxWidth: "35vw", flex: "0 1 280px" }}
                   value={selectedIcao || undefined}
-                  onChange={(v: string | undefined) => setSelectedIcao(v || "")}
+                  onChange={(v: string | undefined) => {
+                    setSelectedIcao(v || "");
+                    setOpenedFileId(null);
+                    setViewMode("全部");
+                    setChartGroupFilter("全部");
+                  }}
                   loading={airportsLoading}
                   disabled={!ready || airports.length === 0}
                   showSearch
@@ -553,17 +582,43 @@ export function App() {
                   placeholder="选择 ICAO"
                 />
 
-                <Button icon={<DownloadOutlined />} onClick={() => void exportFavorites()}>
-                  {compactHeader ? null : "导出收藏"}
-                </Button>
-                <Button
-                  icon={<UploadOutlined />}
-                  onClick={() => {
-                    importInputRef.current?.click();
-                  }}
-                >
-                  {compactHeader ? null : "导入收藏"}
-                </Button>
+                {compactHeader ? (
+                  <Dropdown
+                    trigger={["click"]}
+                    menu={{
+                      items: [
+                        {
+                          key: "export",
+                          icon: <DownloadOutlined />,
+                          label: "导出收藏",
+                          onClick: () => void exportFavorites()
+                        },
+                        {
+                          key: "import",
+                          icon: <UploadOutlined />,
+                          label: "导入收藏",
+                          onClick: () => importInputRef.current?.click()
+                        }
+                      ]
+                    }}
+                  >
+                    <Button icon={<MoreOutlined />} aria-label="更多" />
+                  </Dropdown>
+                ) : (
+                  <>
+                    <Button icon={<DownloadOutlined />} onClick={() => void exportFavorites()}>
+                      导出收藏
+                    </Button>
+                    <Button
+                      icon={<UploadOutlined />}
+                      onClick={() => {
+                        importInputRef.current?.click();
+                      }}
+                    >
+                      导入收藏
+                    </Button>
+                  </>
+                )}
 
               {openedFileId ? (
                 <Tooltip title="新窗口打开">
@@ -670,7 +725,10 @@ export function App() {
                   >
                     <Tag
                       color={viewMode === "全部" ? "blue" : "default"}
-                      onClick={() => setViewMode("全部")}
+                      onClick={() => {
+                        setViewMode("全部");
+                        setChartGroupFilter("全部");
+                      }}
                       style={{
                         marginInlineEnd: 0,
                         cursor: "pointer",
@@ -684,7 +742,10 @@ export function App() {
                     </Tag>
                     <Tag
                       color={viewMode === "收藏" ? "gold" : "default"}
-                      onClick={() => setViewMode("收藏")}
+                      onClick={() => {
+                        setViewMode("收藏");
+                        setChartGroupFilter("全部");
+                      }}
                       style={{
                         marginInlineEnd: 0,
                         cursor: "pointer",
@@ -733,7 +794,7 @@ export function App() {
                 </Space>
               </div>
 
-              {/* 滚动区：错误提示 + 目录树 */}
+              {/* 滚动区：错误提示 + 目录树（非虚拟滚动） */}
               <div style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
                 <Space direction="vertical" style={{ width: "100%" }} size={12}>
                   {airportsError ? <Alert type="error" showIcon message={`机场列表错误：${airportsError}`} /> : null}
