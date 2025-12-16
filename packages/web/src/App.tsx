@@ -11,44 +11,23 @@ import {
   apiIndexStatus,
   apiTree,
   pdfUrl,
-  type AirportRow,
   type IndexStatus,
   type TreeNode
 } from "./api";
 import {
-  Alert,
-  Button,
-  Divider,
-  Dropdown,
-  Empty,
   Grid,
   Layout,
   message,
-  Progress,
-  Segmented,
-  Select,
-  Space,
-  Spin,
-  Tag,
-  Tooltip,
-  Typography,
   theme
 } from "antd";
-import type { DataNode } from "antd/es/tree";
-import { Tree } from "antd";
-import {
-  DownloadOutlined,
-  FilePdfOutlined,
-  MoreOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
-  StarFilled,
-  StarOutlined,
-  UploadOutlined
-} from "@ant-design/icons";
-import { SpecialZoomLevel, Viewer, Worker } from "@react-pdf-viewer/core";
 import { defaultLayoutPlugin } from "@react-pdf-viewer/default-layout";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import { AirportGate } from "./components/AirportGate";
+import { AppHeader } from "./components/AppHeader";
+import { IndexStatusBar } from "./components/IndexStatusBar";
+import { SidebarPanel } from "./components/SidebarPanel";
+import { PdfViewerPanel } from "./components/PdfViewerPanel";
+import { buildChartGroupTags, buildSidebarTreeData } from "./selectors/sidebar";
 
 export function App() {
   const screens = Grid.useBreakpoint();
@@ -59,7 +38,7 @@ export function App() {
   const ready = indexStatus?.phase === "ready";
   const [apiConnectError, setApiConnectError] = useState<string | null>(null);
 
-  const [airports, setAirports] = useState<AirportRow[]>([]);
+  const [airports, setAirports] = useState<any[]>([]);
   const [airportsLoading, setAirportsLoading] = useState(true);
   const [airportsError, setAirportsError] = useState<string | null>(null);
 
@@ -171,7 +150,7 @@ export function App() {
         setAirportsLoading(true);
         const res = await apiAirports();
         const raw = (res as any)?.airports ?? [];
-        const list: AirportRow[] = Array.isArray(raw) ? (raw as AirportRow[]) : [];
+        const list: any[] = Array.isArray(raw) ? (raw as any[]) : [];
         const sorted = [...list].sort((a, b) => {
           const ac = Number((a as any)?.fileCount ?? 0);
           const bc = Number((b as any)?.fileCount ?? 0);
@@ -297,177 +276,18 @@ export function App() {
   };
 
   const sidebarTree = useMemo(() => {
-    const isAll = chartGroupFilter === "全部";
-
-    const getDigitGroup = (n: Extract<TreeNode, { type: "file" }>): string => {
-      // 优先用 chartPage（例如 0C-01），否则退化用文件名
-      const raw = String(n.chartPage || n.name || "").trim();
-      const first = raw[0] || "";
-      if (first >= "0" && first <= "9") return first;
-      return "其他";
-    };
-
-    const applyFilterOnly = (nodes: TreeNode[]): TreeNode[] => {
-      const out: TreeNode[] = [];
-      for (const n of nodes) {
-        if (n.type === "dir") {
-          const nextChildren = applyFilterOnly(n.children);
-          if (nextChildren.length) out.push({ ...n, children: nextChildren });
-        } else {
-          const g = getDigitGroup(n);
-          const matchGroup = isAll || g === chartGroupFilter;
-          const matchFav = viewMode === "全部" || favoriteRelPaths.has(n.relPath);
-          if (matchGroup && matchFav) out.push(n);
-        }
-      }
-      return out;
-    };
-
-    const filtered = applyFilterOnly(tree);
-
-    const groupColors = [
-      "magenta",
-      "red",
-      "volcano",
-      "orange",
-      "gold",
-      "lime",
-      "green",
-      "cyan",
-      "blue",
-      "geekblue"
-    ] as const;
-    const getGroupColor = (g: string) => {
-      if (g === "其他") return "#8c8c8c";
-      const n = Number(g);
-      if (!Number.isNaN(n) && n >= 0 && n <= 9) return groupColors[n];
-      return "#8c8c8c";
-    };
-
-    function toData(nodes: TreeNode[]): DataNode[] {
-      return nodes.map((n) => {
-        if (n.type === "dir") {
-          return {
-            key: `d:${n.path}`,
-            title: (
-              <Typography.Text strong style={{ color: token.colorText }}>
-                {n.name}
-              </Typography.Text>
-            ),
-            children: toData(n.children)
-          };
-        }
-        const g = getDigitGroup(n);
-        const gColor = getGroupColor(g);
-        const isFav = favoriteRelPaths.has(n.relPath);
-        const title = (() => {
-          const parts: string[] = [];
-          if (n.chartName) parts.push(n.chartName);
-          if (n.chartType) parts.push(n.chartType);
-          if (n.isSup) parts.push("SUP");
-          if (n.chartPage) parts.push(n.chartPage);
-          if (g) parts.push(`分组:${g}`);
-          return parts.join(" · ");
-        })();
-        const meta = (
-          <div style={{ width: "100%", minWidth: 0 }}>
-            {/* 第一行：标题 + 星标 */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0 }}>
-              <Typography.Text strong ellipsis={{ tooltip: n.name }} style={{ minWidth: 0, flex: "1 1 auto" }}>
-                {n.name}
-              </Typography.Text>
-              <Tooltip title={isFav ? "取消收藏" : "收藏"}>
-                <span
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    void toggleFavoriteByNode(n);
-                  }}
-                  style={{ display: "inline-flex", alignItems: "center" }}
-                >
-                  {isFav ? <StarFilled style={{ color: token.colorWarning }} /> : <StarOutlined style={{ color: token.colorTextSecondary }} />}
-                </span>
-              </Tooltip>
-            </div>
-            {/* 第二行：tags（可换行，不与标题同一行） */}
-            <div style={{ marginTop: 6 }}>
-              <Space size={[6, 6]} wrap>
-                <Tag color={gColor as any} style={{ marginInlineEnd: 0 }}>
-                  {g}
-                </Tag>
-                {n.chartName ? (
-                  <Tag color="blue" style={{ marginInlineEnd: 0 }}>
-                    {n.chartName}
-                  </Tag>
-                ) : null}
-                {n.chartType ? <Tag style={{ marginInlineEnd: 0, opacity: 0.9 }}>{n.chartType}</Tag> : null}
-                {n.isSup ? (
-                  <Tag color="orange" style={{ marginInlineEnd: 0 }}>
-                    SUP
-                  </Tag>
-                ) : null}
-                {n.chartPage ? <Tag style={{ marginInlineEnd: 0, opacity: 0.75 }}>{n.chartPage}</Tag> : null}
-              </Space>
-            </div>
-          </div>
-        );
-        return {
-          key: `f:${n.id}`,
-          title: meta,
-          isLeaf: true
-        };
-      });
-    }
-    return toData(filtered);
+    return buildSidebarTreeData({
+      tree,
+      chartGroupFilter,
+      viewMode,
+      favoriteRelPaths,
+      token: { colorText: token.colorText, colorTextSecondary: token.colorTextSecondary, colorWarning: token.colorWarning },
+      onToggleFavorite: (n) => void toggleFavoriteByNode(n)
+    });
   }, [tree, chartGroupFilter, viewMode, favoriteRelPaths, token.colorText, token.colorTextSecondary, token.colorWarning]);
 
   const chartGroupTags = useMemo(() => {
-    const counts = new Map<string, number>();
-    const getDigitGroup = (n: Extract<TreeNode, { type: "file" }>): string => {
-      const raw = String(n.chartPage || n.name || "").trim();
-      const first = raw[0] || "";
-      if (first >= "0" && first <= "9") return first;
-      return "其他";
-    };
-    const walk = (nodes: TreeNode[]) => {
-      for (const n of nodes) {
-        if (n.type === "file") {
-          if (viewMode === "收藏" && !favoriteRelPaths.has(n.relPath)) continue;
-          const g = getDigitGroup(n);
-          counts.set(g, (counts.get(g) || 0) + 1);
-        } else walk(n.children);
-      }
-    };
-    walk(tree);
-    const keys = Array.from(counts.keys()).sort((a, b) => {
-      if (a === "其他") return 1;
-      if (b === "其他") return -1;
-      return a.localeCompare(b, "en", { numeric: true });
-    });
-    const groupColors = [
-      "magenta",
-      "red",
-      "volcano",
-      "orange",
-      "gold",
-      "lime",
-      "green",
-      "cyan",
-      "blue",
-      "geekblue"
-    ] as const;
-    const getGroupColor = (g: string) => {
-      if (g === "全部") return "default";
-      if (g === "其他") return "#8c8c8c";
-      const n = Number(g);
-      if (!Number.isNaN(n) && n >= 0 && n <= 9) return groupColors[n];
-      return "#8c8c8c";
-    };
-    const total = Array.from(counts.values()).reduce((s, c) => s + c, 0);
-    return [
-      { key: "全部", count: total, color: getGroupColor("全部") },
-      ...keys.map((k) => ({ key: k, count: counts.get(k)!, color: getGroupColor(k) }))
-    ];
+    return buildChartGroupTags({ tree, viewMode, favoriteRelPaths });
   }, [tree, viewMode, favoriteRelPaths]);
 
   const favoritesCount = useMemo(() => {
@@ -525,13 +345,7 @@ export function App() {
     setActiveIcao("");
   };
 
-  const airportLabelMap = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const a of airports) {
-      m.set(a.icao, `${a.icao}${a.name ? ` - ${a.name}` : ""}`);
-    }
-    return m;
-  }, [airports]);
+  const pdfHref = openedFileId ? pdfUrl(openedFileId) : null;
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -557,221 +371,53 @@ export function App() {
                 padding: 20
               }}
             >
-              <Space direction="vertical" style={{ width: "100%" }} size={12}>
-                <Typography.Title level={4} style={{ margin: 0 }}>
-                  请选择机场
-                </Typography.Title>
-                <Typography.Text type="secondary">
-                  先选择模式，再选择机场；点击确认后进入详情。
-                </Typography.Text>
-
-                {airportsError ? <Alert type="error" showIcon message={`机场列表错误：${airportsError}`} /> : null}
-
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
-                  <Typography.Text type="secondary">模式</Typography.Text>
-                  <Segmented
-                    value={selectModeDraft}
-                    onChange={(v) => setSelectModeDraft(v as any)}
-                    options={[
-                      { label: "查看模式（单机场）", value: "view" },
-                      { label: "航线模式（起/降）", value: "route" }
-                    ]}
-                  />
-                </div>
-
-                <Select
-                  style={{ width: "100%" }}
-                  value={selectModeDraft === "view" ? (draftViewIcao || undefined) : undefined}
-                  onChange={(v: string | undefined) => setDraftViewIcao(v || "")}
-                  loading={airportsLoading}
-                  disabled={airportsLoading || airports.length === 0 || selectModeDraft !== "view"}
-                  showSearch
-                  allowClear
-                  optionFilterProp="label"
-                  options={airports.map((a) => ({
-                    value: a.icao,
-                    label: `${a.icao} ${a.name ? `- ${a.name}` : ""} (${a.fileCount})`
-                  }))}
-                  placeholder={airportsLoading ? "正在加载机场列表…" : "选择 ICAO"}
-                />
-
-                {selectModeDraft === "route" ? (
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    <div style={{ minWidth: 0 }}>
-                      <Typography.Text type="secondary">起飞</Typography.Text>
-                      <Select
-                        style={{ width: "100%", marginTop: 6 }}
-                        value={draftRouteFromIcao || undefined}
-                        onChange={(v: string | undefined) => {
-                          const next = v || "";
-                          setDraftRouteFromIcao(next);
-                          if (next && draftRouteToIcao === next) setDraftRouteToIcao("");
-                        }}
-                        loading={airportsLoading}
-                        disabled={airportsLoading || airports.length === 0}
-                        showSearch
-                        allowClear
-                        optionFilterProp="label"
-                        options={airports.map((a) => ({
-                          value: a.icao,
-                          label: `${a.icao} ${a.name ? `- ${a.name}` : ""} (${a.fileCount})`
-                        }))}
-                        placeholder="选择起飞机场"
-                      />
-                    </div>
-                    <div style={{ minWidth: 0 }}>
-                      <Typography.Text type="secondary">降落</Typography.Text>
-                      <Select
-                        style={{ width: "100%", marginTop: 6 }}
-                        value={draftRouteToIcao || undefined}
-                        onChange={(v: string | undefined) => {
-                          const next = v || "";
-                          setDraftRouteToIcao(next);
-                          if (next && draftRouteFromIcao === next) setDraftRouteFromIcao("");
-                        }}
-                        loading={airportsLoading}
-                        disabled={airportsLoading || airports.length === 0}
-                        showSearch
-                        allowClear
-                        optionFilterProp="label"
-                        options={airports
-                          .filter((a) => !draftRouteFromIcao || a.icao !== draftRouteFromIcao)
-                          .map((a) => ({
-                            value: a.icao,
-                            label: `${a.icao} ${a.name ? `- ${a.name}` : ""} (${a.fileCount})`
-                          }))}
-                        placeholder="选择降落机场"
-                      />
-                    </div>
-                  </div>
-                ) : null}
-
-                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                  <Button
-                    onClick={() => {
-                      setDraftViewIcao("");
-                      setDraftRouteFromIcao("");
-                      setDraftRouteToIcao("");
-                    }}
-                    disabled={!draftViewIcao && !draftRouteFromIcao && !draftRouteToIcao}
-                  >
-                    清空
-                  </Button>
-                  <Button type="primary" onClick={confirmSelection} disabled={!canConfirmSelection}>
-                    确认进入
-                  </Button>
-                </div>
-              </Space>
+              <AirportGate
+                airports={airports as any}
+                airportsLoading={airportsLoading}
+                airportsError={airportsError}
+                mode={selectModeDraft}
+                onModeChange={setSelectModeDraft}
+                draftViewIcao={draftViewIcao}
+                onDraftViewIcaoChange={setDraftViewIcao}
+                draftRouteFromIcao={draftRouteFromIcao}
+                onDraftRouteFromIcaoChange={(icao) => {
+                  setDraftRouteFromIcao(icao);
+                  if (icao && draftRouteToIcao === icao) setDraftRouteToIcao("");
+                }}
+                draftRouteToIcao={draftRouteToIcao}
+                onDraftRouteToIcaoChange={(icao) => {
+                  setDraftRouteToIcao(icao);
+                  if (icao && draftRouteFromIcao === icao) setDraftRouteFromIcao("");
+                }}
+                canConfirm={canConfirmSelection}
+                onConfirm={confirmSelection}
+                onClear={() => {
+                  setDraftViewIcao("");
+                  setDraftRouteFromIcao("");
+                  setDraftRouteToIcao("");
+                }}
+              />
             </div>
           </div>
         ) : null}
 
         {/* 未选择机场时不展示 Header */}
         {activeIcao ? (
-          <Layout.Header
-            style={{
-              flex: "0 0 auto",
-              display: "flex",
-              alignItems: "center",
-              flexWrap: "nowrap",
-              whiteSpace: "nowrap",
-              height: 64,
-              lineHeight: "normal",
-              paddingInline: 12,
-              background: token.colorBgElevated,
-              borderBottom: `1px solid ${token.colorBorderSecondary}`
-            }}
-          >
-            <Space size={12} align="center" style={{ width: "100%", justifyContent: "space-between", minWidth: 0 }}>
-              <Space size={12} align="center" style={{ minWidth: 0, overflow: "hidden" }}>
-                <Button
-                  type="text"
-                  aria-label={siderCollapsed ? "展开侧边栏" : "收起侧边栏"}
-                  icon={siderCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-                  onClick={() => setSiderCollapsed((v) => !v)}
-                />
-                <Typography.Text strong ellipsis style={{ minWidth: 0 }}>
-                  Charts Viewer
-                </Typography.Text>
-              </Space>
-
-              <Space
-                size={12}
-                align="center"
-                style={{ minWidth: 0, justifyContent: "flex-end", flexWrap: "nowrap" }}
-              >
-                <Select
-                  style={{ width: 280, maxWidth: "35vw", flex: "0 1 280px" }}
-                  value={activeIcao || undefined}
-                  onChange={(v: string | undefined) => setActiveIcao(v || "")}
-                  loading={airportsLoading}
-                  disabled={!ready || selectedIcaos.length === 0}
-                  showSearch
-                  allowClear
-                  optionFilterProp="label"
-                  options={selectedIcaos.map((icao) => ({
-                    value: icao,
-                    label: airportLabelMap.get(icao) || icao
-                  }))}
-                  placeholder="切换机场"
-                />
-
-                <Button onClick={resetToSelection}>重新选择</Button>
-
-                {compactHeader ? (
-                  <Dropdown
-                    trigger={["click"]}
-                    menu={{
-                      items: [
-                        {
-                          key: "export",
-                          icon: <DownloadOutlined />,
-                          label: "导出收藏",
-                          onClick: () => void exportFavorites()
-                        },
-                        {
-                          key: "import",
-                          icon: <UploadOutlined />,
-                          label: "导入收藏",
-                          onClick: () => importInputRef.current?.click()
-                        }
-                      ]
-                    }}
-                  >
-                    <Button icon={<MoreOutlined />} aria-label="更多" />
-                  </Dropdown>
-                ) : (
-                  <>
-                    <Button icon={<DownloadOutlined />} onClick={() => void exportFavorites()}>
-                      导出收藏
-                    </Button>
-                    <Button
-                      icon={<UploadOutlined />}
-                      onClick={() => {
-                        importInputRef.current?.click();
-                      }}
-                    >
-                      导入收藏
-                    </Button>
-                  </>
-                )}
-
-              {openedFileId ? (
-                <Tooltip title="新窗口打开">
-                  <Button
-                    icon={<FilePdfOutlined />}
-                    href={pdfUrl(openedFileId)}
-                    target="_blank"
-                    type="default"
-                    aria-label="新窗口打开"
-                  >
-                    {compactHeader ? null : "新窗口打开"}
-                  </Button>
-                </Tooltip>
-              ) : null}
-            </Space>
-          </Space>
-          </Layout.Header>
+          <AppHeader
+            compact={compactHeader}
+            siderCollapsed={siderCollapsed}
+            onToggleSider={() => setSiderCollapsed((v) => !v)}
+            ready={ready}
+            airports={airports as any}
+            selectedIcaos={selectedIcaos}
+            activeIcao={activeIcao}
+            onActiveIcaoChange={setActiveIcao}
+            onResetToSelection={resetToSelection}
+            openedFileId={openedFileId}
+            pdfHref={pdfHref}
+            onExportFavorites={() => void exportFavorites()}
+            onTriggerImport={() => importInputRef.current?.click()}
+          />
         ) : null}
 
         <input
@@ -787,39 +433,13 @@ export function App() {
         />
 
         {!ready ? (
-          <div
-            style={{
-              flex: "0 0 auto",
-              padding: 12,
-              borderBottom: `1px solid ${token.colorBorderSecondary}`,
-              background: token.colorBgLayout
-            }}
-          >
-            <Space direction="vertical" style={{ width: "100%" }} size={8}>
-              {apiConnectError ? <Alert type="error" showIcon message={apiConnectError} /> : null}
-              <Alert
-                type={indexStatus?.phase === "error" ? "error" : "info"}
-                message={indexStatus?.phase === "error" ? "索引失败" : "正在构建索引…"}
-                description={
-                  <Space wrap>
-                    <Typography.Text>{indexStatus?.message || "请稍候"}</Typography.Text>
-                    {indexStatus?.totalPdfs != null ? (
-                      <Typography.Text className="mono">
-                        {Math.min(indexStatus.processedPdfs, indexStatus.totalPdfs)}/{indexStatus.totalPdfs}
-                      </Typography.Text>
-                    ) : null}
-                  </Space>
-                }
-                showIcon
-              />
-              <Progress percent={progressPercent} status={indexStatus?.phase === "error" ? "exception" : "active"} />
-              {indexStatus?.phase === "error" && indexStatus.lastError ? (
-                <Typography.Paragraph style={{ margin: 0 }} type="danger">
-                  <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{indexStatus.lastError}</pre>
-                </Typography.Paragraph>
-              ) : null}
-            </Space>
-          </div>
+          <IndexStatusBar
+            indexStatus={indexStatus}
+            apiConnectError={apiConnectError}
+            progressPercent={progressPercent}
+            borderColor={token.colorBorderSecondary}
+            background={token.colorBgLayout}
+          />
         ) : null}
 
         {/* 未选中机场时不展示主界面 */}
@@ -835,150 +455,25 @@ export function App() {
             theme="light"
             style={{ borderRight: `1px solid ${token.colorBorderSecondary}`, overflow: "hidden", height: "100%" }}
           >
-            <div
-              style={{
-                height: "100%",
-                minHeight: 0,
-                overflow: "hidden",
-                padding: 12,
-                display: "flex",
-                flexDirection: "column",
-                gap: 12
-              }}
-            >
-              {/* 固定区：标题 + Tags（不随目录树滚动） */}
-              <div style={{ flex: "0 0 auto" }}>
-                <Space direction="vertical" style={{ width: "100%" }} size={12}>
-                  {/* 双机场模式：起/降快速切换（在筛选区固定显示） */}
-                  {selectedIcaos.length === 2 ? (
-                    <div
-                      style={{
-                        display: "flex",
-                        flexWrap: "wrap",
-                        alignItems: "center",
-                        gap: 8,
-                        paddingBottom: 8,
-                        borderBottom: `1px solid ${token.colorBorderSecondary}`
-                      }}
-                    >
-                      <Typography.Text type="secondary">起/降机场</Typography.Text>
-                      <Segmented
-                        value={activeIcao}
-                        onChange={(v) => setActiveIcao(String(v))}
-                        options={[
-                          { label: `起 ${selectedIcaos[0]}`, value: selectedIcaos[0] },
-                          { label: `降 ${selectedIcaos[1]}`, value: selectedIcaos[1] }
-                        ]}
-                      />
-                    </div>
-                  ) : null}
-                  {/* 收藏筛选（固定区，与你反馈的“分组 Tag 区域”在同一块） */}
-                  <div
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 6,
-                      paddingBottom: 8,
-                      borderBottom: `1px solid ${token.colorBorderSecondary}`
-                    }}
-                  >
-                    <Tag
-                      color={viewMode === "全部" ? "blue" : "default"}
-                      onClick={() => {
-                        setViewMode("全部");
-                        setChartGroupFilter("全部");
-                      }}
-                      style={{
-                        marginInlineEnd: 0,
-                        cursor: "pointer",
-                        userSelect: "none",
-                        opacity: viewMode === "全部" ? 1 : 0.85,
-                        outline: viewMode === "全部" ? `2px solid ${token.colorPrimary}` : "none",
-                        outlineOffset: 1
-                      }}
-                    >
-                      全部
-                    </Tag>
-                    <Tag
-                      color={viewMode === "收藏" ? "gold" : "default"}
-                      onClick={() => {
-                        setViewMode("收藏");
-                        setChartGroupFilter("全部");
-                      }}
-                      style={{
-                        marginInlineEnd: 0,
-                        cursor: "pointer",
-                        userSelect: "none",
-                        opacity: viewMode === "收藏" ? 1 : 0.85,
-                        outline: viewMode === "收藏" ? `2px solid ${token.colorPrimary}` : "none",
-                        outlineOffset: 1
-                      }}
-                    >
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                        <StarFilled style={{ color: token.colorWarning }} />
-                        收藏{typeof favoritesCount === "number" ? `(${favoritesCount})` : ""}
-                      </span>
-                    </Tag>
-                  </div>
-                  <div
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 6,
-                      paddingBottom: 8,
-                      borderBottom: `1px solid ${token.colorBorderSecondary}`
-                    }}
-                  >
-                    {chartGroupTags.map((g) => (
-                      <Tag
-                        key={g.key}
-                        color={g.color as any}
-                        onClick={() => setChartGroupFilter(g.key)}
-                        style={{
-                          marginInlineEnd: 0,
-                          cursor: "pointer",
-                          userSelect: "none",
-                          opacity: chartGroupFilter === g.key ? 1 : 0.85,
-                          outline: chartGroupFilter === g.key ? `2px solid ${token.colorPrimary}` : "none",
-                          outlineOffset: 1
-                        }}
-                      >
-                        {g.key}
-                        {typeof g.count === "number" ? (
-                          <span style={{ marginLeft: 6, opacity: 0.75 }}>({g.count})</span>
-                        ) : null}
-                      </Tag>
-                    ))}
-                  </div>
-                </Space>
-              </div>
-
-              {/* 滚动区：错误提示 + 目录树（非虚拟滚动） */}
-              <div style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
-                <Space direction="vertical" style={{ width: "100%" }} size={12}>
-                  {airportsError ? <Alert type="error" showIcon message={`机场列表错误：${airportsError}`} /> : null}
-                  {treeError ? <Alert type="error" showIcon message={`树加载错误：${treeError}`} /> : null}
-                  <Spin spinning={treeLoading}>
-                    {tree.length === 0 && !treeLoading ? (
-                      <Empty description="没有找到 PDF" />
-                    ) : (
-                      <Tree
-                        defaultExpandAll
-                        blockNode
-                        treeData={sidebarTree}
-                        onSelect={(keys: React.Key[]) => {
-                          const k = String(keys[0] ?? "");
-                          if (k.startsWith("f:")) {
-                            const id = Number(k.slice(2));
-                            if (!Number.isNaN(id)) setOpenedFileId(id);
-                          }
-                        }}
-                      />
-                    )}
-                  </Spin>
-                </Space>
-              </div>
-            </div>
+            <SidebarPanel
+              borderColor={token.colorBorderSecondary}
+              activeIcao={activeIcao}
+              selectedIcaos={selectedIcaos}
+              onActiveIcaoChange={setActiveIcao}
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
+              favoritesCount={favoritesCount}
+              chartGroupFilter={chartGroupFilter}
+              onChartGroupFilterChange={setChartGroupFilter}
+              chartGroupTags={chartGroupTags}
+              airportsError={airportsError}
+              treeError={treeError}
+              treeLoading={treeLoading}
+              treeHasAny={tree.length > 0}
+              treeData={sidebarTree}
+              onOpenFileId={setOpenedFileId}
+              token={{ colorPrimary: token.colorPrimary, colorWarning: token.colorWarning }}
+            />
           </Layout.Sider>
 
           <Layout.Content style={{ padding: 12, overflow: "hidden", minHeight: 0 }}>
@@ -998,42 +493,18 @@ export function App() {
                     height: "100%",
                     minHeight: 0,
                     overflow: "hidden",
-                    // 让圆角“看得见”：加一层内边距/底色，避免 PDF 内容与滚动条贴边把圆角视觉上“顶没”
-                    padding: 8,
-                    background: token.colorBgLayout,
-                    boxSizing: "border-box"
+                    padding: 0
                   }}
                 >
-                  {openedFileId ? (
-                    <div
-                      style={{
-                        height: "100%",
-                        minHeight: 0,
-                        overflow: "hidden",
-                        borderRadius: token.borderRadiusLG - 2,
-                        background: token.colorBgContainer
-                      }}
-                    >
-                      {/* 让 @react-pdf-viewer 自己管理内部滚动；外层不要再包一层 overflow:auto，
-                          否则在 flex 里可能导致后续页一直处于 loading（视口/虚拟渲染判断异常）。 */}
-                      <div style={{ height: "100%", minHeight: 0, overflow: "hidden" }}>
-                        <Worker
-                          // Vite 下推荐用 pdfjs-dist 的 worker（无需外网 CDN）
-                          workerUrl={pdfWorkerUrl}
-                        >
-                          <Viewer
-                            fileUrl={pdfUrl(openedFileId)}
-                            defaultScale={SpecialZoomLevel.PageFit}
-                            plugins={[pdfLayoutPlugin]}
-                          />
-                        </Worker>
-                      </div>
-                    </div>
-                  ) : (
-                    <div style={{ padding: 24 }}>
-                      <Empty description="点击左侧文件即可打开" />
-                    </div>
-                  )}
+                  <PdfViewerPanel
+                    openedFileId={openedFileId}
+                    pdfHref={pdfHref}
+                    workerUrl={pdfWorkerUrl}
+                    plugins={[pdfLayoutPlugin]}
+                    borderRadius={token.borderRadiusLG}
+                    backgroundLayout={token.colorBgLayout}
+                    backgroundContainer={token.colorBgContainer}
+                  />
                 </div>
               </Layout.Content>
             </Layout>
