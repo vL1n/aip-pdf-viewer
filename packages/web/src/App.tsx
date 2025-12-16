@@ -30,8 +30,8 @@ import { PdfViewerPanel } from "./components/PdfViewerPanel";
 import { buildChartGroupTags, buildSidebarTreeData } from "./selectors/sidebar";
 import type { ThemeMode } from "./hooks/useThemeMode";
 
-export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeMode) => void }) {
-  const { themeMode, onThemeModeChange } = props;
+export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeMode) => void; isDark: boolean }) {
+  const { themeMode, onThemeModeChange, isDark } = props;
   const screens = Grid.useBreakpoint();
   const compactHeader = !screens.md;
   const [siderCollapsed, setSiderCollapsed] = useState(false);
@@ -509,6 +509,7 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
                     pdfHref={pdfHref}
                     workerUrl={pdfWorkerUrl}
                     plugins={[pdfLayoutPlugin]}
+                    isDark={isDark}
                     borderRadius={token.borderRadiusLG}
                     backgroundLayout={token.colorBgLayout}
                     backgroundContainer={token.colorBgContainer}

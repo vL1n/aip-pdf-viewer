@@ -7,11 +7,12 @@ export function PdfViewerPanel(props: {
   pdfHref: string | null;
   workerUrl: string;
   plugins: any[];
+  isDark: boolean;
   borderRadius: number;
   backgroundLayout: string;
   backgroundContainer: string;
 }) {
-  const { openedFileId, pdfHref, workerUrl, plugins, borderRadius, backgroundLayout, backgroundContainer } = props;
+  const { openedFileId, pdfHref, workerUrl, plugins, isDark, borderRadius, backgroundLayout, backgroundContainer } = props;
 
   return (
     <div
@@ -37,7 +38,12 @@ export function PdfViewerPanel(props: {
           {/* 让 @react-pdf-viewer 自己管理内部滚动；外层不要再包一层 overflow:auto */}
           <div style={{ height: "100%", minHeight: 0, overflow: "hidden" }}>
             <Worker workerUrl={workerUrl}>
-              <Viewer fileUrl={pdfHref} defaultScale={SpecialZoomLevel.PageFit} plugins={plugins} />
+              <Viewer
+                fileUrl={pdfHref}
+                defaultScale={SpecialZoomLevel.PageFit}
+                plugins={plugins}
+                theme={isDark ? "dark" : "light"}
+              />
             </Worker>
           </div>
         </div>

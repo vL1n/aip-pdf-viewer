@@ -18,7 +18,7 @@ function Root() {
   return (
     <ConfigProvider locale={zhCN} theme={{ algorithm }}>
       <AntdApp>
-        <App themeMode={themeMode} onThemeModeChange={setThemeMode} />
+        <App themeMode={themeMode} onThemeModeChange={setThemeMode} isDark={isDark} />
       </AntdApp>
     </ConfigProvider>
   );
