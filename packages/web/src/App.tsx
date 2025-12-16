@@ -16,6 +16,7 @@ import {
 } from "./api";
 import {
   Grid,
+  Drawer,
   Layout,
   message,
   theme
@@ -34,7 +35,10 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
   const { themeMode, onThemeModeChange, isDark } = props;
   const screens = Grid.useBreakpoint();
   const compactHeader = !screens.md;
+  const isMobile = !screens.md;
   const [siderCollapsed, setSiderCollapsed] = useState(false);
+  // 移动端 Drawer：等抽屉完全展开后再渲染目录树，避免“拉出时卡顿”
+  const [mobileDrawerFullyOpen, setMobileDrawerFullyOpen] = useState(false);
 
   const [indexStatus, setIndexStatus] = useState<IndexStatus | null>(null);
   const ready = indexStatus?.phase === "ready";
@@ -180,6 +184,9 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
     setChartGroupFilter("全部");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeIcao]);
+
+  // 移动端：首次进入航图查看页时默认打开目录抽屉（不默认收起）
+  // 注：仍会在“点开文件”后自动收起，且抽屉完全展开后才渲染目录树以减少卡顿。
 
   useEffect(() => {
     if (!ready) return;
@@ -348,6 +355,10 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
   };
 
   const pdfHref = openedFileId ? pdfUrl(openedFileId) : null;
+  const openFileFromSidebar = (id: number) => {
+    setOpenedFileId(id);
+    if (isMobile) setSiderCollapsed(true);
+  };
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -410,7 +421,14 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
           <AppHeader
             compact={compactHeader}
             siderCollapsed={siderCollapsed}
-            onToggleSider={() => setSiderCollapsed((v) => !v)}
+            onToggleSider={() => {
+              setSiderCollapsed((v) => {
+                const next = !v;
+                // 开始拉出 Drawer 时先不渲染目录树
+                if (isMobile && next === false) setMobileDrawerFullyOpen(false);
+                return next;
+              });
+            }}
             ready={ready}
             airports={airports as any}
             selectedIcaos={selectedIcaos}
@@ -453,36 +471,39 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
         {/* 未选中机场时不展示主界面 */}
         {ready && selectedIcaos.length === 0 ? null : (
         <Layout style={{ flex: "1 1 auto", minHeight: 0, height: "100%" }}>
-          <Layout.Sider
-            width={420}
-            collapsible
-            collapsedWidth={0}
-            collapsed={siderCollapsed}
-            onCollapse={(v: boolean) => setSiderCollapsed(v)}
-            trigger={null}
-            theme="light"
-            style={{ borderRight: `1px solid ${token.colorBorderSecondary}`, overflow: "hidden", height: "100%" }}
-          >
-            <SidebarPanel
-              borderColor={token.colorBorderSecondary}
-              activeIcao={activeIcao}
-              selectedIcaos={selectedIcaos}
-              onActiveIcaoChange={setActiveIcao}
-              viewMode={viewMode}
-              onViewModeChange={setViewMode}
-              favoritesCount={favoritesCount}
-              chartGroupFilter={chartGroupFilter}
-              onChartGroupFilterChange={setChartGroupFilter}
-              chartGroupTags={chartGroupTags}
-              airportsError={airportsError}
-              treeError={treeError}
-              treeLoading={treeLoading}
-              treeHasAny={tree.length > 0}
-              treeData={sidebarTree}
-              onOpenFileId={setOpenedFileId}
-              token={{ colorPrimary: token.colorPrimary, colorWarning: token.colorWarning }}
-            />
-          </Layout.Sider>
+          {/* 桌面：左侧 Sider；移动端：底部 Drawer */}
+          {isMobile ? null : (
+            <Layout.Sider
+              width={420}
+              collapsible
+              collapsedWidth={0}
+              collapsed={siderCollapsed}
+              onCollapse={(v: boolean) => setSiderCollapsed(v)}
+              trigger={null}
+              theme="light"
+              style={{ borderRight: `1px solid ${token.colorBorderSecondary}`, overflow: "hidden", height: "100%" }}
+            >
+              <SidebarPanel
+                borderColor={token.colorBorderSecondary}
+                activeIcao={activeIcao}
+                selectedIcaos={selectedIcaos}
+                onActiveIcaoChange={setActiveIcao}
+                viewMode={viewMode}
+                onViewModeChange={setViewMode}
+                favoritesCount={favoritesCount}
+                chartGroupFilter={chartGroupFilter}
+                onChartGroupFilterChange={setChartGroupFilter}
+                chartGroupTags={chartGroupTags}
+                airportsError={airportsError}
+                treeError={treeError}
+                treeLoading={treeLoading}
+                treeHasAny={tree.length > 0}
+                treeData={sidebarTree}
+                onOpenFileId={setOpenedFileId}
+                token={{ colorPrimary: token.colorPrimary, colorWarning: token.colorWarning }}
+              />
+            </Layout.Sider>
+          )}
 
           <Layout.Content style={{ padding: 12, overflow: "hidden", minHeight: 0 }}>
             <Layout style={{ height: "100%", background: token.colorBgLayout, minHeight: 0 }}>
@@ -518,6 +539,58 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
               </Layout.Content>
             </Layout>
           </Layout.Content>
+
+          {isMobile ? (
+            <Drawer
+              title="目录"
+              placement="bottom"
+              height="75vh"
+              open={!siderCollapsed}
+              onClose={() => {
+                setMobileDrawerFullyOpen(false);
+                setSiderCollapsed(true);
+              }}
+              afterOpenChange={(open) => {
+                // 只有在 Drawer 动画完成后才标记 fullyOpen
+                setMobileDrawerFullyOpen(open);
+              }}
+              maskClosable
+              destroyOnClose={false}
+              styles={{
+                body: { padding: 0 },
+                header: { borderBottom: `1px solid ${token.colorBorderSecondary}` },
+                content: { background: token.colorBgContainer }
+              }}
+            >
+              <div style={{ height: "100%", minHeight: 0, overflow: "hidden" }}>
+                {!mobileDrawerFullyOpen ? (
+                  <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <div style={{ padding: 16, opacity: 0.85 }}>正在展开…</div>
+                  </div>
+                ) : (
+                  <SidebarPanel
+                    borderColor={token.colorBorderSecondary}
+                    activeIcao={activeIcao}
+                    selectedIcaos={selectedIcaos}
+                    onActiveIcaoChange={setActiveIcao}
+                    viewMode={viewMode}
+                    onViewModeChange={setViewMode}
+                    favoritesCount={favoritesCount}
+                    chartGroupFilter={chartGroupFilter}
+                    onChartGroupFilterChange={setChartGroupFilter}
+                    chartGroupTags={chartGroupTags}
+                    airportsError={airportsError}
+                    treeError={treeError}
+                    treeLoading={treeLoading}
+                    treeHasAny={tree.length > 0}
+                    treeData={sidebarTree}
+                    onOpenFileId={openFileFromSidebar}
+                    token={{ colorPrimary: token.colorPrimary, colorWarning: token.colorWarning }}
+                  />
+                )}
+              </div>
+            </Drawer>
+          ) : null}
         </Layout>
         )}
     </div>
