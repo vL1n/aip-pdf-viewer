@@ -25,6 +25,7 @@ import {
   Layout,
   message,
   Progress,
+  Segmented,
   Select,
   Space,
   Spin,
@@ -62,7 +63,17 @@ export function App() {
   const [airportsLoading, setAirportsLoading] = useState(true);
   const [airportsError, setAirportsError] = useState<string | null>(null);
 
-  const [selectedIcao, setSelectedIcao] = useState<string>("");
+  // 首屏“选择区域”支持：
+  // - 查看模式：仅允许选择 1 个机场
+  // - 航线模式：允许选择 2 个机场（按选择顺序：起/降）
+  const [selectModeDraft, setSelectModeDraft] = useState<"view" | "route">("view");
+  const [draftViewIcao, setDraftViewIcao] = useState<string>("");
+  const [draftRouteFromIcao, setDraftRouteFromIcao] = useState<string>("");
+  const [draftRouteToIcao, setDraftRouteToIcao] = useState<string>("");
+
+  // 已确认的机场集合（进入主界面后不允许在其它区域多选修改）
+  const [selectedIcaos, setSelectedIcaos] = useState<string[]>([]);
+  const [activeIcao, setActiveIcao] = useState<string>("");
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [treeLoading, setTreeLoading] = useState(false);
   const [treeError, setTreeError] = useState<string | null>(null);
@@ -182,20 +193,20 @@ export function App() {
 
   // 切换机场时：清空筛选（收藏/分组）并关闭已打开文件
   useEffect(() => {
-    if (!selectedIcao) return;
+    if (!activeIcao) return;
     setOpenedFileId(null);
     setViewMode("全部");
     setChartGroupFilter("全部");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedIcao]);
+  }, [activeIcao]);
 
   useEffect(() => {
     if (!ready) return;
-    if (!selectedIcao) return;
+    if (!activeIcao) return;
     (async () => {
       try {
         setTreeLoading(true);
-        const res = await apiTree(selectedIcao);
+        const res = await apiTree(activeIcao);
         const t = (res as any)?.tree ?? [];
         setTree(Array.isArray(t) ? t : []);
         setTreeError(null);
@@ -205,15 +216,15 @@ export function App() {
         setTreeLoading(false);
       }
     })();
-  }, [selectedIcao]);
+  }, [activeIcao]);
 
   useEffect(() => {
     if (!ready) return;
-    if (!selectedIcao) return;
+    if (!activeIcao) return;
     (async () => {
       try {
         setFavoritesLoading(true);
-        const res = await apiFavoriteRelPaths(selectedIcao);
+        const res = await apiFavoriteRelPaths(activeIcao);
         const list = Array.isArray((res as any)?.relPaths) ? ((res as any).relPaths as string[]) : [];
         setFavoriteRelPaths(new Set(list));
       } catch {
@@ -223,7 +234,7 @@ export function App() {
         setFavoritesLoading(false);
       }
     })();
-  }, [ready, selectedIcao]);
+  }, [ready, activeIcao]);
 
   const toggleFavoriteByNode = async (n: Extract<TreeNode, { type: "file" }>) => {
     const relPath = n.relPath;
@@ -272,8 +283,8 @@ export function App() {
       if (!favorites) throw new Error("文件格式不正确：缺少 favorites 数组");
       await apiFavoritesImport({ mode: "merge", favorites });
       // 仅刷新当前机场收藏标记
-      if (selectedIcao) {
-        const res = await apiFavoriteRelPaths(selectedIcao);
+      if (activeIcao) {
+        const res = await apiFavoriteRelPaths(activeIcao);
         const list = Array.isArray((res as any)?.relPaths) ? ((res as any).relPaths as string[]) : [];
         setFavoriteRelPaths(new Set(list));
       }
@@ -468,10 +479,64 @@ export function App() {
     return Math.floor((Math.min(indexStatus.processedPdfs, indexStatus.totalPdfs) / indexStatus.totalPdfs) * 100);
   }, [indexStatus]);
 
+  // 模式切换时：保持草稿尽量合理，并清理无效状态
+  useEffect(() => {
+    if (selectModeDraft === "view") {
+      // 从航线切回查看：尽量用起飞机场作为默认
+      if (!draftViewIcao) setDraftViewIcao(draftRouteFromIcao || draftRouteToIcao || "");
+    } else {
+      // 从查看切到航线：尽量用查看机场作为起飞默认
+      if (!draftRouteFromIcao && draftViewIcao) setDraftRouteFromIcao(draftViewIcao);
+      // 避免起降相同
+      if (draftRouteFromIcao && draftRouteToIcao && draftRouteFromIcao === draftRouteToIcao) setDraftRouteToIcao("");
+    }
+  }, [selectModeDraft]);
+
+  const canConfirmSelection = useMemo(() => {
+    if (selectModeDraft === "view") return !!draftViewIcao;
+    if (!draftRouteFromIcao || !draftRouteToIcao) return false;
+    return draftRouteFromIcao !== draftRouteToIcao;
+  }, [selectModeDraft, draftViewIcao, draftRouteFromIcao, draftRouteToIcao]);
+
+  const confirmSelection = () => {
+    if (!canConfirmSelection) return;
+    const next =
+      selectModeDraft === "view"
+        ? [draftViewIcao].filter(Boolean)
+        : [draftRouteFromIcao, draftRouteToIcao].filter(Boolean);
+    setSelectedIcaos(next);
+    // 默认进入后 active 指向“起”（或单机场）
+    setActiveIcao(next[0] || "");
+  };
+
+  const resetToSelection = () => {
+    const nextMode: "view" | "route" = selectedIcaos.length === 2 ? "route" : "view";
+    setSelectModeDraft(nextMode);
+    if (selectedIcaos.length === 2) {
+      setDraftRouteFromIcao(selectedIcaos[0] || "");
+      setDraftRouteToIcao(selectedIcaos[1] || "");
+      setDraftViewIcao(selectedIcaos[0] || "");
+    } else {
+      setDraftViewIcao(selectedIcaos[0] || "");
+      setDraftRouteFromIcao(selectedIcaos[0] || "");
+      setDraftRouteToIcao("");
+    }
+    setSelectedIcaos([]);
+    setActiveIcao("");
+  };
+
+  const airportLabelMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const a of airports) {
+      m.set(a.icao, `${a.icao}${a.name ? ` - ${a.name}` : ""}`);
+    }
+    return m;
+  }, [airports]);
+
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {/* 首次进入：先选择机场，再展示主界面 */}
-        {ready && !selectedIcao ? (
+        {ready && selectedIcaos.length === 0 ? (
           <div
             style={{
               flex: "1 1 auto",
@@ -497,22 +562,29 @@ export function App() {
                   请选择机场
                 </Typography.Title>
                 <Typography.Text type="secondary">
-                  选择 ICAO 后进入目录树与 PDF 浏览。
+                  先选择模式，再选择机场；点击确认后进入详情。
                 </Typography.Text>
 
                 {airportsError ? <Alert type="error" showIcon message={`机场列表错误：${airportsError}`} /> : null}
 
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+                  <Typography.Text type="secondary">模式</Typography.Text>
+                  <Segmented
+                    value={selectModeDraft}
+                    onChange={(v) => setSelectModeDraft(v as any)}
+                    options={[
+                      { label: "查看模式（单机场）", value: "view" },
+                      { label: "航线模式（起/降）", value: "route" }
+                    ]}
+                  />
+                </div>
+
                 <Select
                   style={{ width: "100%" }}
-                  value={undefined}
-                  onChange={(v: string | undefined) => {
-                    setSelectedIcao(v || "");
-                    setOpenedFileId(null);
-                    setViewMode("全部");
-                    setChartGroupFilter("全部");
-                  }}
+                  value={selectModeDraft === "view" ? (draftViewIcao || undefined) : undefined}
+                  onChange={(v: string | undefined) => setDraftViewIcao(v || "")}
                   loading={airportsLoading}
-                  disabled={airportsLoading || airports.length === 0}
+                  disabled={airportsLoading || airports.length === 0 || selectModeDraft !== "view"}
                   showSearch
                   allowClear
                   optionFilterProp="label"
@@ -522,13 +594,80 @@ export function App() {
                   }))}
                   placeholder={airportsLoading ? "正在加载机场列表…" : "选择 ICAO"}
                 />
+
+                {selectModeDraft === "route" ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <Typography.Text type="secondary">起飞</Typography.Text>
+                      <Select
+                        style={{ width: "100%", marginTop: 6 }}
+                        value={draftRouteFromIcao || undefined}
+                        onChange={(v: string | undefined) => {
+                          const next = v || "";
+                          setDraftRouteFromIcao(next);
+                          if (next && draftRouteToIcao === next) setDraftRouteToIcao("");
+                        }}
+                        loading={airportsLoading}
+                        disabled={airportsLoading || airports.length === 0}
+                        showSearch
+                        allowClear
+                        optionFilterProp="label"
+                        options={airports.map((a) => ({
+                          value: a.icao,
+                          label: `${a.icao} ${a.name ? `- ${a.name}` : ""} (${a.fileCount})`
+                        }))}
+                        placeholder="选择起飞机场"
+                      />
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <Typography.Text type="secondary">降落</Typography.Text>
+                      <Select
+                        style={{ width: "100%", marginTop: 6 }}
+                        value={draftRouteToIcao || undefined}
+                        onChange={(v: string | undefined) => {
+                          const next = v || "";
+                          setDraftRouteToIcao(next);
+                          if (next && draftRouteFromIcao === next) setDraftRouteFromIcao("");
+                        }}
+                        loading={airportsLoading}
+                        disabled={airportsLoading || airports.length === 0}
+                        showSearch
+                        allowClear
+                        optionFilterProp="label"
+                        options={airports
+                          .filter((a) => !draftRouteFromIcao || a.icao !== draftRouteFromIcao)
+                          .map((a) => ({
+                            value: a.icao,
+                            label: `${a.icao} ${a.name ? `- ${a.name}` : ""} (${a.fileCount})`
+                          }))}
+                        placeholder="选择降落机场"
+                      />
+                    </div>
+                  </div>
+                ) : null}
+
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                  <Button
+                    onClick={() => {
+                      setDraftViewIcao("");
+                      setDraftRouteFromIcao("");
+                      setDraftRouteToIcao("");
+                    }}
+                    disabled={!draftViewIcao && !draftRouteFromIcao && !draftRouteToIcao}
+                  >
+                    清空
+                  </Button>
+                  <Button type="primary" onClick={confirmSelection} disabled={!canConfirmSelection}>
+                    确认进入
+                  </Button>
+                </div>
               </Space>
             </div>
           </div>
         ) : null}
 
         {/* 未选择机场时不展示 Header */}
-        {selectedIcao ? (
+        {activeIcao ? (
           <Layout.Header
             style={{
               flex: "0 0 auto",
@@ -563,24 +702,21 @@ export function App() {
               >
                 <Select
                   style={{ width: 280, maxWidth: "35vw", flex: "0 1 280px" }}
-                  value={selectedIcao || undefined}
-                  onChange={(v: string | undefined) => {
-                    setSelectedIcao(v || "");
-                    setOpenedFileId(null);
-                    setViewMode("全部");
-                    setChartGroupFilter("全部");
-                  }}
+                  value={activeIcao || undefined}
+                  onChange={(v: string | undefined) => setActiveIcao(v || "")}
                   loading={airportsLoading}
-                  disabled={!ready || airports.length === 0}
+                  disabled={!ready || selectedIcaos.length === 0}
                   showSearch
                   allowClear
                   optionFilterProp="label"
-                  options={airports.map((a) => ({
-                    value: a.icao,
-                    label: `${a.icao} ${a.name ? `- ${a.name}` : ""} (${a.fileCount})`
+                  options={selectedIcaos.map((icao) => ({
+                    value: icao,
+                    label: airportLabelMap.get(icao) || icao
                   }))}
-                  placeholder="选择 ICAO"
+                  placeholder="切换机场"
                 />
+
+                <Button onClick={resetToSelection}>重新选择</Button>
 
                 {compactHeader ? (
                   <Dropdown
@@ -687,7 +823,7 @@ export function App() {
         ) : null}
 
         {/* 未选中机场时不展示主界面 */}
-        {ready && !selectedIcao ? null : (
+        {ready && selectedIcaos.length === 0 ? null : (
         <Layout style={{ flex: "1 1 auto", minHeight: 0, height: "100%" }}>
           <Layout.Sider
             width={420}
@@ -713,6 +849,29 @@ export function App() {
               {/* 固定区：标题 + Tags（不随目录树滚动） */}
               <div style={{ flex: "0 0 auto" }}>
                 <Space direction="vertical" style={{ width: "100%" }} size={12}>
+                  {/* 双机场模式：起/降快速切换（在筛选区固定显示） */}
+                  {selectedIcaos.length === 2 ? (
+                    <div
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        alignItems: "center",
+                        gap: 8,
+                        paddingBottom: 8,
+                        borderBottom: `1px solid ${token.colorBorderSecondary}`
+                      }}
+                    >
+                      <Typography.Text type="secondary">起/降机场</Typography.Text>
+                      <Segmented
+                        value={activeIcao}
+                        onChange={(v) => setActiveIcao(String(v))}
+                        options={[
+                          { label: `起 ${selectedIcaos[0]}`, value: selectedIcaos[0] },
+                          { label: `降 ${selectedIcaos[1]}`, value: selectedIcaos[1] }
+                        ]}
+                      />
+                    </div>
+                  ) : null}
                   {/* 收藏筛选（固定区，与你反馈的“分组 Tag 区域”在同一块） */}
                   <div
                     style={{
