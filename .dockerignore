@@ -1,0 +1,20 @@
+# 依赖与构建产物
+node_modules
+**/node_modules
+packages/**/dist
+packages/**/.turbo
+.pnpm-store
+
+# 本地数据
+.data
+**/.data
+state
+
+# 编辑器/系统
+.DS_Store
+.idea
+.vscode
+
+# 日志
+*.log
+

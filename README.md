@@ -20,7 +20,7 @@
 1) 安装依赖：
 
 ```bash
-pnpm config set registry https://registry.npmjs.org
+pnpm config set registry https://registry.npmmirror.com
 pnpm install
 ```
 
@@ -99,6 +99,76 @@ pnpm dist:win
 
 - **mac**：推荐使用 `packages/desktop`（Electron）启动，它会在本机启动后端并打开内置窗口（不依赖 Docker）。
 - **Windows**：推荐使用 `packages/launcher` 生成的 `aip-launcher.exe`（便携版），它会在本机启动后端并打开默认浏览器。
+
+## Docker（生产/局域网部署：前后端同一个容器）
+
+这个镜像会在一个进程里同时提供：
+
+- `GET /api/*`：后端 API/PDF
+- `GET /`：前端静态站点（`packages/web/dist`）
+
+### 一键重新构建 & 部署（推荐）
+
+需要你提供宿主机的航图根目录（只读挂载），以及一个用于保存索引/收藏数据库的目录（可写挂载）。
+
+```bash
+pnpm docker:redeploy -- --root "/xxx/xxx/eaip/20251201"
+```
+
+如果你本机 Docker 配了某些镜像加速器导致拉取 `node:20-bookworm-slim` 失败（例如 403），可以覆盖基础镜像：
+
+```bash
+# 方式1：在 redeploy 时指定
+pnpm docker:redeploy -- --root "/xxx/xxx/eaip/20251201" --node-image "node:20-bullseye-slim"
+
+# 方式2：仅 build 时指定（再手动 docker run 或继续用 redeploy）
+pnpm docker:build -- --build-arg NODE_IMAGE="node:20-bullseye-slim"
+```
+
+注意：`better-sqlite3` 是原生模块，**不要用 Alpine(musl) 的 node 镜像**，优先使用 Debian/Ubuntu 系列的 `*-slim`。
+
+如果你在 Docker build 里遇到 **corepack 下载 pnpm** 或 **pnpm install 拉依赖** 失败（网络/代理/被拦），可以把 registry 指到你能访问的镜像源：
+
+```bash
+pnpm docker:redeploy -- --root "/xxx/xxx/eaip/20251201" --npm-registry "https://registry.npmmirror.com"
+```
+
+（它会同时影响 corepack 下载 pnpm 本体和 pnpm 安装依赖。）
+
+### 遇到索引库损坏（SqliteError: database disk image is malformed）
+
+索引库（`index.sqlite`）是可重建的；收藏库（`favorites.sqlite`）应尽量保留。
+
+你可以一键强制重建索引库（会删掉 `/state/index.sqlite*` 并重建）：
+
+```bash
+pnpm docker:redeploy -- --root "/xxx/xxx/eaip/20251201" --rebuild-db
+```
+
+默认：
+
+- 宿主机端口：`13001`（可用 `--port 3000` 改）
+- 容器名：`eaip-pdf-viewer`
+- 镜像 tag：`eaip-pdf-viewer:local`
+- 状态目录：`.data/docker-state`（会被挂载到容器 `/state`）
+
+部署后打开：`http://localhost:13001`
+
+### 仅构建镜像
+
+```bash
+pnpm docker:build
+```
+
+### 统一“产物选择”入口（windows / docker 二选一）
+
+```bash
+# Windows 便携版（线上流程，不改动）
+pnpm dist:win
+
+# Docker 产物（额外新增）
+pnpm docker:build
+```
 
 ## 备注
 

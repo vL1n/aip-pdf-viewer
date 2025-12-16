@@ -8,6 +8,8 @@
     "build": "pnpm -r build",
     "start": "pnpm --filter @aip/server start",
     "dist:win": "pnpm --filter @aip/launcher dist:win",
+    "docker:build": "docker build -t eaip-pdf-viewer:local .",
+    "docker:redeploy": "node scripts/docker-redeploy.mjs",
     "typecheck": "pnpm -r typecheck"
   }
 }

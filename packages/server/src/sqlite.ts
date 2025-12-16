@@ -47,9 +47,16 @@ export function openDb({ dbPath }: OpenDbOptions): Db {
       PRAGMA foreign_keys = ON;
     `);
 
-    // 启动即做一次快速完整性检查，避免后续 resetData 才报“malformed”
+    // 启动即做一次完整性检查，避免后续 resetData 才报“malformed”
     try {
-      const rows = db.prepare("PRAGMA quick_check(1)").all() as Array<Record<string, unknown>>;
+      // 先 checkpoint，尽量把 WAL 合并进主库（也能提前暴露 WAL 损坏）
+      try {
+        db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+      } catch {
+        // ignore
+      }
+
+      const rows = db.prepare("PRAGMA integrity_check(1)").all() as Array<Record<string, unknown>>;
       const values = rows.map((r) => String(Object.values(r)[0] ?? ""));
       if (!values.every((v) => v.toLowerCase() === "ok")) {
         db.close();

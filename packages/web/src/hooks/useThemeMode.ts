@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 export type ThemeMode = "system" | "light" | "dark";
 
-const STORAGE_KEY = "naip.themeMode";
+const STORAGE_KEY = "eaip.themeMode";
 
 function getSystemPrefersDark(): boolean {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
