@@ -55,6 +55,7 @@ export function AppHeader(props: {
     value: icao,
     label: labelMap.get(icao) || icao
   }));
+  const isRouteMode = selectedIcaos.length === 2;
 
   const openPdfInNewWindow = () => {
     if (!pdfHref) return;
@@ -129,22 +130,29 @@ export function AppHeader(props: {
           align="center"
           style={{ minWidth: 0, justifyContent: "flex-end", flexWrap: compact ? "wrap" : "nowrap" }}
         >
-          <Select
-            style={{
-              width: compact ? 180 : 280,
-              maxWidth: compact ? "60vw" : "35vw",
-              flex: compact ? "1 1 180px" : "0 1 280px",
-              minWidth: compact ? 140 : 200
-            }}
-            value={activeIcao || undefined}
-            onChange={(v: string | undefined) => onActiveIcaoChange(v || "")}
-            disabled={!ready || selectedIcaos.length === 0}
-            showSearch
-            allowClear
-            optionFilterProp="label"
-            options={airportOptions}
-            placeholder="切换机场"
-          />
+          {/* 航线模式下（双机场）由侧边栏的“起/降机场”Tag 负责切换；顶部不再展示 Select */}
+          {isRouteMode ? (
+            <Typography.Text type="secondary" ellipsis style={{ maxWidth: compact ? "70vw" : 320 }}>
+              当前：{labelMap.get(activeIcao) || activeIcao || "-"}
+            </Typography.Text>
+          ) : (
+            <Select
+              style={{
+                width: compact ? 180 : 280,
+                maxWidth: compact ? "60vw" : "35vw",
+                flex: compact ? "1 1 180px" : "0 1 280px",
+                minWidth: compact ? 140 : 200
+              }}
+              value={activeIcao || undefined}
+              onChange={(v: string | undefined) => onActiveIcaoChange(v || "")}
+              disabled={!ready || selectedIcaos.length === 0}
+              showSearch
+              allowClear
+              optionFilterProp="label"
+              options={airportOptions}
+              placeholder="切换机场"
+            />
+          )}
 
           {compact ? (
             <Dropdown
