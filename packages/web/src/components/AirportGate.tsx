@@ -1,6 +1,7 @@
 import React from "react";
 import { Alert, Button, Segmented, Select, Space, Typography } from "antd";
 import type { AirportRow } from "../api";
+import type { ThemeMode } from "../hooks/useThemeMode";
 
 export function AirportGate(props: {
   airports: AirportRow[];
@@ -9,6 +10,9 @@ export function AirportGate(props: {
 
   mode: "view" | "route";
   onModeChange: (m: "view" | "route") => void;
+
+  themeMode: ThemeMode;
+  onThemeModeChange: (m: ThemeMode) => void;
 
   draftViewIcao: string;
   onDraftViewIcaoChange: (icao: string) => void;
@@ -29,6 +33,8 @@ export function AirportGate(props: {
     airportsError,
     mode,
     onModeChange,
+    themeMode,
+    onThemeModeChange,
     draftViewIcao,
     onDraftViewIcaoChange,
     draftRouteFromIcao,
@@ -66,18 +72,33 @@ export function AirportGate(props: {
         />
       </div>
 
-      <Select
-        style={{ width: "100%" }}
-        value={mode === "view" ? (draftViewIcao || undefined) : undefined}
-        onChange={(v: string | undefined) => onDraftViewIcaoChange(v || "")}
-        loading={airportsLoading}
-        disabled={airportsLoading || airports.length === 0 || mode !== "view"}
-        showSearch
-        allowClear
-        optionFilterProp="label"
-        options={options}
-        placeholder={airportsLoading ? "正在加载机场列表…" : "选择 ICAO"}
-      />
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+        <Typography.Text type="secondary">主题</Typography.Text>
+        <Segmented
+          value={themeMode}
+          onChange={(v) => onThemeModeChange(v as any)}
+          options={[
+            { label: "跟随系统", value: "system" },
+            { label: "浅色", value: "light" },
+            { label: "深色", value: "dark" }
+          ]}
+        />
+      </div>
+
+      {mode === "view" ? (
+        <Select
+          style={{ width: "100%" }}
+          value={draftViewIcao || undefined}
+          onChange={(v: string | undefined) => onDraftViewIcaoChange(v || "")}
+          loading={airportsLoading}
+          disabled={airportsLoading || airports.length === 0}
+          showSearch
+          allowClear
+          optionFilterProp="label"
+          options={options}
+          placeholder={airportsLoading ? "正在加载机场列表…" : "选择 ICAO"}
+        />
+      ) : null}
 
       {mode === "route" ? (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>

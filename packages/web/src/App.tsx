@@ -28,8 +28,10 @@ import { IndexStatusBar } from "./components/IndexStatusBar";
 import { SidebarPanel } from "./components/SidebarPanel";
 import { PdfViewerPanel } from "./components/PdfViewerPanel";
 import { buildChartGroupTags, buildSidebarTreeData } from "./selectors/sidebar";
+import type { ThemeMode } from "./hooks/useThemeMode";
 
-export function App() {
+export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeMode) => void }) {
+  const { themeMode, onThemeModeChange } = props;
   const screens = Grid.useBreakpoint();
   const compactHeader = !screens.md;
   const [siderCollapsed, setSiderCollapsed] = useState(false);
@@ -377,6 +379,8 @@ export function App() {
                 airportsError={airportsError}
                 mode={selectModeDraft}
                 onModeChange={setSelectModeDraft}
+                themeMode={themeMode}
+                onThemeModeChange={onThemeModeChange}
                 draftViewIcao={draftViewIcao}
                 onDraftViewIcaoChange={setDraftViewIcao}
                 draftRouteFromIcao={draftRouteFromIcao}
@@ -417,6 +421,10 @@ export function App() {
             pdfHref={pdfHref}
             onExportFavorites={() => void exportFavorites()}
             onTriggerImport={() => importInputRef.current?.click()}
+            background={token.colorBgElevated}
+            borderColor={token.colorBorderSecondary}
+            themeMode={themeMode}
+            onThemeModeChange={onThemeModeChange}
           />
         ) : null}
 

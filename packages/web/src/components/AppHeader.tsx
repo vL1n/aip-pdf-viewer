@@ -1,7 +1,8 @@
 import React from "react";
 import { Button, Dropdown, Layout, Select, Space, Tooltip, Typography } from "antd";
 import type { AirportRow } from "../api";
-import { DownloadOutlined, FilePdfOutlined, MenuFoldOutlined, MenuUnfoldOutlined, MoreOutlined, UploadOutlined } from "@ant-design/icons";
+import { CheckOutlined, DownloadOutlined, FilePdfOutlined, MenuFoldOutlined, MenuUnfoldOutlined, MoreOutlined, UploadOutlined } from "@ant-design/icons";
+import type { ThemeMode } from "../hooks/useThemeMode";
 
 export function AppHeader(props: {
   compact: boolean;
@@ -20,6 +21,12 @@ export function AppHeader(props: {
 
   onExportFavorites: () => void;
   onTriggerImport: () => void;
+
+  background: string;
+  borderColor: string;
+
+  themeMode: ThemeMode;
+  onThemeModeChange: (m: ThemeMode) => void;
 }) {
   const {
     compact,
@@ -34,7 +41,11 @@ export function AppHeader(props: {
     openedFileId,
     pdfHref,
     onExportFavorites,
-    onTriggerImport
+    onTriggerImport,
+    background,
+    borderColor,
+    themeMode,
+    onThemeModeChange
   } = props;
 
   const labelMap = new Map<string, string>();
@@ -45,20 +56,62 @@ export function AppHeader(props: {
     label: labelMap.get(icao) || icao
   }));
 
+  const openPdfInNewWindow = () => {
+    if (!pdfHref) return;
+    window.open(pdfHref, "_blank", "noopener,noreferrer");
+  };
+
+  const themeItems = [
+    {
+      key: "theme-system",
+      label: (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          {themeMode === "system" ? <CheckOutlined /> : <span style={{ width: 14 }} />}
+          跟随系统
+        </span>
+      ),
+      onClick: () => onThemeModeChange("system")
+    },
+    {
+      key: "theme-light",
+      label: (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          {themeMode === "light" ? <CheckOutlined /> : <span style={{ width: 14 }} />}
+          浅色
+        </span>
+      ),
+      onClick: () => onThemeModeChange("light")
+    },
+    {
+      key: "theme-dark",
+      label: (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          {themeMode === "dark" ? <CheckOutlined /> : <span style={{ width: 14 }} />}
+          深色
+        </span>
+      ),
+      onClick: () => onThemeModeChange("dark")
+    }
+  ];
+
   return (
     <Layout.Header
       style={{
         flex: "0 0 auto",
         display: "flex",
         alignItems: "center",
-        flexWrap: "nowrap",
+        flexWrap: compact ? "wrap" : "nowrap",
+        rowGap: compact ? 8 : 0,
         whiteSpace: "nowrap",
-        height: 64,
+        height: compact ? "auto" : 64,
         lineHeight: "normal",
-        paddingInline: 12
+        paddingInline: 12,
+        paddingBlock: compact ? 8 : 0,
+        background,
+        borderBottom: `1px solid ${borderColor}`
       }}
     >
-      <Space size={12} align="center" style={{ width: "100%", justifyContent: "space-between", minWidth: 0 }}>
+      <Space size={compact ? 8 : 12} align="center" style={{ width: "100%", justifyContent: "space-between", minWidth: 0 }}>
         <Space size={12} align="center" style={{ minWidth: 0, overflow: "hidden" }}>
           <Button
             type="text"
@@ -71,9 +124,18 @@ export function AppHeader(props: {
           </Typography.Text>
         </Space>
 
-        <Space size={12} align="center" style={{ minWidth: 0, justifyContent: "flex-end", flexWrap: "nowrap" }}>
+        <Space
+          size={compact ? 8 : 12}
+          align="center"
+          style={{ minWidth: 0, justifyContent: "flex-end", flexWrap: compact ? "wrap" : "nowrap" }}
+        >
           <Select
-            style={{ width: 280, maxWidth: "35vw", flex: "0 1 280px" }}
+            style={{
+              width: compact ? 180 : 280,
+              maxWidth: compact ? "60vw" : "35vw",
+              flex: compact ? "1 1 180px" : "0 1 280px",
+              minWidth: compact ? 140 : 200
+            }}
             value={activeIcao || undefined}
             onChange={(v: string | undefined) => onActiveIcaoChange(v || "")}
             disabled={!ready || selectedIcaos.length === 0}
@@ -84,13 +146,16 @@ export function AppHeader(props: {
             placeholder="切换机场"
           />
 
-          <Button onClick={onResetToSelection}>重新选择</Button>
-
           {compact ? (
             <Dropdown
               trigger={["click"]}
               menu={{
                 items: [
+                  ...(openedFileId && pdfHref
+                    ? [{ key: "open", icon: <FilePdfOutlined />, label: "新窗口打开", onClick: openPdfInNewWindow } as any]
+                    : []),
+                  { key: "theme", type: "group" as any, label: "主题", children: themeItems as any },
+                  { key: "reset", label: "重新选择", onClick: onResetToSelection },
                   { key: "export", icon: <DownloadOutlined />, label: "导出收藏", onClick: onExportFavorites },
                   { key: "import", icon: <UploadOutlined />, label: "导入收藏", onClick: onTriggerImport }
                 ]
@@ -100,6 +165,10 @@ export function AppHeader(props: {
             </Dropdown>
           ) : (
             <>
+              <Button onClick={onResetToSelection}>重新选择</Button>
+              <Dropdown trigger={["click"]} menu={{ items: [{ key: "theme", type: "group" as any, label: "主题", children: themeItems as any }] }}>
+                <Button>主题</Button>
+              </Dropdown>
               <Button icon={<DownloadOutlined />} onClick={onExportFavorites}>
                 导出收藏
               </Button>
@@ -109,7 +178,7 @@ export function AppHeader(props: {
             </>
           )}
 
-          {openedFileId && pdfHref ? (
+          {!compact && openedFileId && pdfHref ? (
             <Tooltip title="新窗口打开">
               <Button
                 icon={<FilePdfOutlined />}
@@ -118,7 +187,7 @@ export function AppHeader(props: {
                 type="default"
                 aria-label="新窗口打开"
               >
-                {compact ? null : "新窗口打开"}
+                新窗口打开
               </Button>
             </Tooltip>
           ) : null}
