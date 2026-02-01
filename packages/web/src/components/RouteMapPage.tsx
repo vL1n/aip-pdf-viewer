@@ -24,7 +24,9 @@ import {
   QuestionCircleOutlined,
   UnorderedListOutlined,
   CloseOutlined,
-  ImportOutlined
+  ImportOutlined,
+  AimOutlined,
+  FullscreenOutlined
 } from "@ant-design/icons";
 import { MapContainer, TileLayer, Marker, Polyline, Popup, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
@@ -62,10 +64,10 @@ const createIcon = (color: string, size: number = 24) => {
   });
 };
 
-const airportIcon = createIcon("#e74c3c", 20); // 红色 - 机场
-const waypointIcon = createIcon("#3498db", 14); // 蓝色 - 航点
-const navaidIcon = createIcon("#9b59b6", 16); // 紫色 - 导航台
-const explicitWaypointIcon = createIcon("#2ecc71", 16); // 绿色 - 用户指定航点
+const airportIcon = createIcon("#e74c3c", 14); // 红色 - 机场
+const waypointIcon = createIcon("#3498db", 8); // 蓝色 - 航点
+const navaidIcon = createIcon("#9b59b6", 10); // 紫色 - 导航台
+const explicitWaypointIcon = createIcon("#2ecc71", 10); // 绿色 - 用户指定航点
 
 // 创建飞机图标（带朝向）
 const createAircraftIcon = (heading: number) => {
@@ -98,7 +100,7 @@ function getMarkerIcon(point: ParsedRoutePoint) {
 }
 
 /** 自动调整地图视野的组件 */
-function FitBounds({ points }: { points: ParsedRoutePoint[] }) {
+function FitBounds({ points, trigger }: { points: ParsedRoutePoint[]; trigger: number }) {
   const map = useMap();
 
   useEffect(() => {
@@ -106,15 +108,16 @@ function FitBounds({ points }: { points: ParsedRoutePoint[] }) {
 
     const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lon]));
     map.fitBounds(bounds, { padding: [50, 50] });
-  }, [map, points]);
+  }, [map, points, trigger]);
 
   return null;
 }
 
 /** 跟随 VATSIM 飞机位置的组件 */
-function FollowAircraft({ pilot, enabled }: { pilot: VatsimPilot | null; enabled: boolean }) {
+function FollowAircraft({ pilot, enabled, centerTrigger }: { pilot: VatsimPilot | null; enabled: boolean; centerTrigger: number }) {
   const map = useMap();
   const [hasInitialCenter, setHasInitialCenter] = useState(false);
+  const [lastTrigger, setLastTrigger] = useState(0);
 
   useEffect(() => {
     if (!enabled || !pilot) {
@@ -128,6 +131,14 @@ function FollowAircraft({ pilot, enabled }: { pilot: VatsimPilot | null; enabled
       setHasInitialCenter(true);
     }
   }, [map, pilot, enabled, hasInitialCenter]);
+
+  // 手动触发居中
+  useEffect(() => {
+    if (centerTrigger > lastTrigger && pilot) {
+      map.setView([pilot.latitude, pilot.longitude], 8);
+      setLastTrigger(centerTrigger);
+    }
+  }, [map, pilot, centerTrigger, lastTrigger]);
 
   return null;
 }
@@ -150,6 +161,8 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
 
   const [showHelp, setShowHelp] = useState(false);
   const [showLegend, setShowLegend] = useState(false);
+  const [fitBoundsTrigger, setFitBoundsTrigger] = useState(0);
+  const [vatsimCenterTrigger, setVatsimCenterTrigger] = useState(0);
 
   // VATSIM 追踪状态
   const [trackVatsim, setTrackVatsim] = useState(false);
@@ -506,13 +519,14 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
               />
 
               {/* 跟随 VATSIM 飞机 */}
-              <FollowAircraft pilot={vatsimPilot} enabled={trackVatsim} />
+              <FollowAircraft pilot={vatsimPilot} enabled={trackVatsim} centerTrigger={vatsimCenterTrigger} />
 
               {/* VATSIM 飞机标记 */}
               {vatsimPilot && (
                 <Marker
                   position={[vatsimPilot.latitude, vatsimPilot.longitude]}
                   icon={createAircraftIcon(vatsimPilot.heading)}
+                  zIndexOffset={1000}
                 >
                   <Tooltip permanent direction="top" offset={[0, -16]}>
                     <strong>{vatsimPilot.callsign}</strong>
@@ -543,7 +557,7 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
 
               {parseResult && parseResult.points.length > 0 && (
                 <>
-                  <FitBounds points={parseResult.points} />
+                  <FitBounds points={parseResult.points} trigger={fitBoundsTrigger} />
 
                   {/* 航线 */}
                   <Polyline
@@ -562,7 +576,7 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
                       position={[point.lat, point.lon]}
                       icon={getMarkerIcon(point)}
                     >
-                      <Tooltip permanent={point.isAirport || point.isExplicit} direction="top" offset={[0, -10]}>
+                      <Tooltip permanent={point.isAirport} direction="top" offset={[0, -10]}>
                         <strong>{point.ident}</strong>
                         {point.viaAirway && <span style={{ marginLeft: 4, opacity: 0.7 }}>via {point.viaAirway}</span>}
                       </Tooltip>
@@ -583,15 +597,46 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
               )}
             </MapContainer>
 
-            {/* 图例 */}
+            {/* 地图控制按钮 */}
             <div
               style={{
                 position: "absolute",
                 bottom: 20,
                 right: 20,
-                zIndex: 1000
+                zIndex: 1000,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-end",
+                gap: 8
               }}
             >
+              {/* 定位到 VATSIM 位置按钮 */}
+              {vatsimPilot && (
+                <AntTooltip title="定位到 VATSIM 位置" placement="left">
+                  <Button
+                    type="primary"
+                    shape="circle"
+                    icon={<AimOutlined />}
+                    onClick={() => setVatsimCenterTrigger((v) => v + 1)}
+                    style={{ opacity: 0.9, boxShadow: "0 2px 6px rgba(0,0,0,0.2)" }}
+                  />
+                </AntTooltip>
+              )}
+
+              {/* 航路居中按钮 */}
+              {parseResult && parseResult.points.length > 0 && (
+                <AntTooltip title="航路居中" placement="left">
+                  <Button
+                    type="primary"
+                    shape="circle"
+                    icon={<FullscreenOutlined />}
+                    onClick={() => setFitBoundsTrigger((v) => v + 1)}
+                    style={{ opacity: 0.9, boxShadow: "0 2px 6px rgba(0,0,0,0.2)" }}
+                  />
+                </AntTooltip>
+              )}
+
+              {/* 图例 */}
               {showLegend ? (
                 <Card
                   size="small"
