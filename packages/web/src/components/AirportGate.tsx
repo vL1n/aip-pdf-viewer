@@ -1,6 +1,6 @@
 import React from "react";
 import { Alert, Button, Divider, Segmented, Select, Space, Typography } from "antd";
-import { CompassOutlined } from "@ant-design/icons";
+import { CompassOutlined, FileTextOutlined } from "@ant-design/icons";
 import type { AirportRow } from "../api";
 import type { ThemeMode } from "../hooks/useThemeMode";
 
@@ -9,46 +9,43 @@ export function AirportGate(props: {
   airportsLoading: boolean;
   airportsError: string | null;
 
-  mode: "view" | "route";
-  onModeChange: (m: "view" | "route") => void;
-
   themeMode: ThemeMode;
   onThemeModeChange: (m: ThemeMode) => void;
 
   draftViewIcao: string;
   onDraftViewIcaoChange: (icao: string) => void;
 
-  draftRouteFromIcao: string;
-  onDraftRouteFromIcaoChange: (icao: string) => void;
-
-  draftRouteToIcao: string;
-  onDraftRouteToIcaoChange: (icao: string) => void;
-
   canConfirm: boolean;
   onConfirm: () => void;
   onClear: () => void;
 
-  /** 进入航路规划页面 */
-  onEnterRouteMap?: () => void;
+  /** 航线规划起飞机场 */
+  routeDepartureIcao: string;
+  onRouteDepartureChange: (icao: string) => void;
+
+  /** 航线规划降落机场 */
+  routeArrivalIcao: string;
+  onRouteArrivalChange: (icao: string) => void;
+
+  /** 进入航线规划页面 */
+  onEnterRoutePlanning?: () => void;
 }) {
   const {
     airports,
     airportsLoading,
     airportsError,
-    mode,
-    onModeChange,
     themeMode,
     onThemeModeChange,
     draftViewIcao,
     onDraftViewIcaoChange,
-    draftRouteFromIcao,
-    onDraftRouteFromIcaoChange,
-    draftRouteToIcao,
-    onDraftRouteToIcaoChange,
     canConfirm,
     onConfirm,
     onClear,
-    onEnterRouteMap
+    routeDepartureIcao,
+    onRouteDepartureChange,
+    routeArrivalIcao,
+    onRouteArrivalChange,
+    onEnterRoutePlanning
   } = props;
 
   const options = airports.map((a) => ({
@@ -56,27 +53,12 @@ export function AirportGate(props: {
     label: `${a.icao} ${a.name ? `- ${a.name}` : ""} (${a.fileCount})`
   }));
 
+  // 航线规划按钮只有在起/降机场都选择后才可点击
+  const canEnterRoutePlanning = !!routeDepartureIcao && !!routeArrivalIcao && routeDepartureIcao !== routeArrivalIcao;
+
   return (
     <Space direction="vertical" style={{ width: "100%" }} size={12}>
-      <Typography.Title level={4} style={{ margin: 0 }}>
-        请选择机场
-      </Typography.Title>
-      <Typography.Text type="secondary">先选择模式，再选择机场；点击确认后进入详情。</Typography.Text>
-
-      {airportsError ? <Alert type="error" showIcon message={`机场列表错误：${airportsError}`} /> : null}
-
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
-        <Typography.Text type="secondary">模式</Typography.Text>
-        <Segmented
-          value={mode}
-          onChange={(v) => onModeChange(v as any)}
-          options={[
-            { label: "查看模式（单机场）", value: "view" },
-            { label: "航线模式（起/降）", value: "route" }
-          ]}
-        />
-      </div>
-
+      {/* 主题设置 */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
         <Typography.Text type="secondary">主题</Typography.Text>
         <Segmented
@@ -90,88 +72,120 @@ export function AirportGate(props: {
         />
       </div>
 
-      {mode === "view" ? (
-        <Select
-          style={{ width: "100%" }}
-          value={draftViewIcao || undefined}
-          onChange={(v: string | undefined) => onDraftViewIcaoChange(v || "")}
-          loading={airportsLoading}
-          disabled={airportsLoading || airports.length === 0}
-          showSearch
-          allowClear
-          optionFilterProp="label"
-          options={options}
-          placeholder={airportsLoading ? "正在加载机场列表…" : "选择 ICAO"}
-        />
-      ) : null}
+      {airportsError ? <Alert type="error" showIcon message={`机场列表错误：${airportsError}`} /> : null}
 
-      {mode === "route" ? (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <div style={{ minWidth: 0 }}>
-            <Typography.Text type="secondary">起飞</Typography.Text>
-            <Select
-              style={{ width: "100%", marginTop: 6 }}
-              value={draftRouteFromIcao || undefined}
-              onChange={(v: string | undefined) => onDraftRouteFromIcaoChange(v || "")}
-              loading={airportsLoading}
-              disabled={airportsLoading || airports.length === 0}
-              showSearch
-              allowClear
-              optionFilterProp="label"
-              options={options}
-              placeholder="选择起飞机场"
-            />
-          </div>
-          <div style={{ minWidth: 0 }}>
-            <Typography.Text type="secondary">降落</Typography.Text>
-            <Select
-              style={{ width: "100%", marginTop: 6 }}
-              value={draftRouteToIcao || undefined}
-              onChange={(v: string | undefined) => onDraftRouteToIcaoChange(v || "")}
-              loading={airportsLoading}
-              disabled={airportsLoading || airports.length === 0}
-              showSearch
-              allowClear
-              optionFilterProp="label"
-              options={options.filter((o) => !draftRouteFromIcao || o.value !== draftRouteFromIcao)}
-              placeholder="选择降落机场"
-            />
-          </div>
-        </div>
-      ) : null}
+      <Divider style={{ margin: "4px 0" }} />
+
+      {/* 查看机场航图 */}
+      <Typography.Title level={5} style={{ margin: 0 }}>
+        查看机场航图
+      </Typography.Title>
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        选择机场后点击确认进入航图浏览
+      </Typography.Text>
+
+      <Select
+        style={{ width: "100%" }}
+        value={draftViewIcao || undefined}
+        onChange={(v: string | undefined) => onDraftViewIcaoChange(v || "")}
+        loading={airportsLoading}
+        disabled={airportsLoading || airports.length === 0}
+        showSearch
+        allowClear
+        optionFilterProp="label"
+        options={options}
+        placeholder={airportsLoading ? "正在加载机场列表…" : "选择 ICAO"}
+      />
 
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-        <Button onClick={onClear} disabled={!draftViewIcao && !draftRouteFromIcao && !draftRouteToIcao}>
+        <Button onClick={onClear} disabled={!draftViewIcao}>
           清空
         </Button>
-        <Button type="primary" onClick={onConfirm} disabled={!canConfirm}>
-          确认进入
+        <Button type="primary" icon={<FileTextOutlined />} onClick={onConfirm} disabled={!canConfirm}>
+          进入航图查看
         </Button>
       </div>
 
-      {/* 航路规划入口 */}
-      {onEnterRouteMap && (
+      {/* 航线规划入口 */}
+      {onEnterRoutePlanning && (
         <>
           <Divider style={{ margin: "16px 0 12px 0" }} />
-          <div style={{ textAlign: "center" }}>
-            <Button
-              type="default"
-              icon={<CompassOutlined />}
-              onClick={onEnterRouteMap}
-              size="large"
-            >
-              航路规划（地图可视化）
-            </Button>
-            <div style={{ marginTop: 8 }}>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                输入航路字符串，在地图上查看航点和航线
-              </Typography.Text>
+          <Typography.Title level={5} style={{ margin: 0 }}>
+            航线规划
+          </Typography.Title>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            选择起飞和降落机场后进入航线规划页面
+          </Typography.Text>
+
+          {/* 起/降机场选择 */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div style={{ minWidth: 0 }}>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>起飞机场</Typography.Text>
+              <Select
+                style={{ width: "100%", marginTop: 4 }}
+                value={routeDepartureIcao || undefined}
+                onChange={(v: string | undefined) => {
+                  const newVal = v || "";
+                  onRouteDepartureChange(newVal);
+                  // 避免起降相同
+                  if (newVal && routeArrivalIcao === newVal) {
+                    onRouteArrivalChange("");
+                  }
+                }}
+                loading={airportsLoading}
+                disabled={airportsLoading || airports.length === 0}
+                showSearch
+                allowClear
+                optionFilterProp="label"
+                options={options}
+                placeholder="选择起飞机场"
+              />
             </div>
+            <div style={{ minWidth: 0 }}>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>降落机场</Typography.Text>
+              <Select
+                style={{ width: "100%", marginTop: 4 }}
+                value={routeArrivalIcao || undefined}
+                onChange={(v: string | undefined) => {
+                  const newVal = v || "";
+                  onRouteArrivalChange(newVal);
+                  // 避免起降相同
+                  if (newVal && routeDepartureIcao === newVal) {
+                    onRouteDepartureChange("");
+                  }
+                }}
+                loading={airportsLoading}
+                disabled={airportsLoading || airports.length === 0}
+                showSearch
+                allowClear
+                optionFilterProp="label"
+                options={options.filter((o) => !routeDepartureIcao || o.value !== routeDepartureIcao)}
+                placeholder="选择降落机场"
+              />
+            </div>
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <Button
+              onClick={() => {
+                onRouteDepartureChange("");
+                onRouteArrivalChange("");
+              }}
+              disabled={!routeDepartureIcao && !routeArrivalIcao}
+            >
+              清空
+            </Button>
+            <Button
+              type="primary"
+              icon={<CompassOutlined />}
+              onClick={onEnterRoutePlanning}
+              disabled={!canEnterRoutePlanning}
+            >
+              进入航线规划
+            </Button>
           </div>
         </>
       )}
     </Space>
   );
 }
-
-

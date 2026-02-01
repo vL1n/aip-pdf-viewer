@@ -29,6 +29,8 @@ export interface VatsimTrackBarProps {
   pilot: VatsimPilot | null;
   /** 是否禁用 */
   disabled?: boolean;
+  /** 是否使用内联模式（无容器样式） */
+  inline?: boolean;
 }
 
 export function VatsimTrackBar({
@@ -36,7 +38,8 @@ export function VatsimTrackBar({
   onImportRoute,
   onLocateAircraft,
   pilot,
-  disabled = false
+  disabled = false,
+  inline = false
 }: VatsimTrackBarProps) {
   const { token } = theme.useToken();
 
@@ -103,18 +106,20 @@ export function VatsimTrackBar({
     onImportRoute?.(fullRoute);
   }, [pilot, onImportRoute]);
 
-  return (
-    <div
-      style={{
+  const containerStyle = inline
+    ? { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" as const }
+    : {
         padding: "8px 16px",
         background: token.colorBgElevated,
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
         display: "flex",
         alignItems: "center",
         gap: 12,
-        flexWrap: "wrap"
-      }}
-    >
+        flexWrap: "wrap" as const
+      };
+
+  return (
+    <div style={containerStyle}>
       {/* 追踪开关 */}
       <Space size="small">
         <Tooltip title="开启后将在地图上显示该用户的实时位置">

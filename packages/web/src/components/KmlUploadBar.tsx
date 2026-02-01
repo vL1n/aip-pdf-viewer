@@ -29,13 +29,16 @@ export interface KmlUploadBarProps {
   kmlResult: KmlParseResult | null;
   /** 是否禁用 */
   disabled?: boolean;
+  /** 是否使用内联模式（无容器样式） */
+  inline?: boolean;
 }
 
 export function KmlUploadBar({
   onKmlParsed,
   onClear,
   kmlResult,
-  disabled = false
+  disabled = false,
+  inline = false
 }: KmlUploadBarProps) {
   const { token } = theme.useToken();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -81,18 +84,20 @@ export function KmlUploadBar({
     onClear();
   }, [onClear]);
 
-  return (
-    <div
-      style={{
+  const containerStyle = inline
+    ? { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" as const }
+    : {
         padding: "8px 16px",
         background: token.colorBgElevated,
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
         display: "flex",
         alignItems: "center",
         gap: 12,
-        flexWrap: "wrap"
-      }}
-    >
+        flexWrap: "wrap" as const
+      };
+
+  return (
+    <div style={containerStyle}>
       {/* 隐藏的文件输入 */}
       <input
         ref={fileInputRef}

@@ -28,7 +28,7 @@ import { AppHeader } from "./components/AppHeader";
 import { IndexStatusBar } from "./components/IndexStatusBar";
 import { SidebarPanel } from "./components/SidebarPanel";
 import { PdfViewerPanel } from "./components/PdfViewerPanel";
-import { RouteMapPage } from "./components/RouteMapPage";
+import { RouteIntegratedPage } from "./components/RouteIntegratedPage";
 import { buildChartGroupTags, buildSidebarTreeData } from "./selectors/sidebar";
 import type { ThemeMode } from "./hooks/useThemeMode";
 
@@ -38,7 +38,7 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
   const compactHeader = !screens.md;
   const isMobile = !screens.md;
   const [siderCollapsed, setSiderCollapsed] = useState(false);
-  // 移动端 Drawer：等抽屉完全展开后再渲染目录树，避免“拉出时卡顿”
+  // 移动端 Drawer：等抽屉完全展开后再渲染目录树，避免"拉出时卡顿"
   const [mobileDrawerFullyOpen, setMobileDrawerFullyOpen] = useState(false);
 
   const [indexStatus, setIndexStatus] = useState<IndexStatus | null>(null);
@@ -49,18 +49,17 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
   const [airportsLoading, setAirportsLoading] = useState(true);
   const [airportsError, setAirportsError] = useState<string | null>(null);
 
-  // 航路规划页面状态
-  const [showRouteMap, setShowRouteMap] = useState(false);
+  // 航线规划页面状态（整合后的页面）
+  const [showRoutePlanning, setShowRoutePlanning] = useState(false);
 
-  // 首屏"选择区域"支持：
-  // - 查看模式：仅允许选择 1 个机场
-  // - 航线模式：允许选择 2 个机场（按选择顺序：起/降）
-  const [selectModeDraft, setSelectModeDraft] = useState<"view" | "route">("view");
+  // 航线规划起降机场
+  const [routeDepartureIcao, setRouteDepartureIcao] = useState<string>("");
+  const [routeArrivalIcao, setRouteArrivalIcao] = useState<string>("");
+
+  // 首屏机场选择
   const [draftViewIcao, setDraftViewIcao] = useState<string>("");
-  const [draftRouteFromIcao, setDraftRouteFromIcao] = useState<string>("");
-  const [draftRouteToIcao, setDraftRouteToIcao] = useState<string>("");
 
-  // 已确认的机场集合（进入主界面后不允许在其它区域多选修改）
+  // 已确认的机场（进入主界面后）
   const [selectedIcaos, setSelectedIcaos] = useState<string[]>([]);
   const [activeIcao, setActiveIcao] = useState<string>("");
   const [tree, setTree] = useState<TreeNode[]>([]);
@@ -189,9 +188,6 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeIcao]);
 
-  // 移动端：首次进入航图查看页时默认打开目录抽屉（不默认收起）
-  // 注：仍会在“点开文件”后自动收起，且抽屉完全展开后才渲染目录树以减少卡顿。
-
   useEffect(() => {
     if (!ready) return;
     if (!activeIcao) return;
@@ -312,48 +308,19 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
     return Math.floor((Math.min(indexStatus.processedPdfs, indexStatus.totalPdfs) / indexStatus.totalPdfs) * 100);
   }, [indexStatus]);
 
-  // 模式切换时：保持草稿尽量合理，并清理无效状态
-  useEffect(() => {
-    if (selectModeDraft === "view") {
-      // 从航线切回查看：尽量用起飞机场作为默认
-      if (!draftViewIcao) setDraftViewIcao(draftRouteFromIcao || draftRouteToIcao || "");
-    } else {
-      // 从查看切到航线：尽量用查看机场作为起飞默认
-      if (!draftRouteFromIcao && draftViewIcao) setDraftRouteFromIcao(draftViewIcao);
-      // 避免起降相同
-      if (draftRouteFromIcao && draftRouteToIcao && draftRouteFromIcao === draftRouteToIcao) setDraftRouteToIcao("");
-    }
-  }, [selectModeDraft]);
-
   const canConfirmSelection = useMemo(() => {
-    if (selectModeDraft === "view") return !!draftViewIcao;
-    if (!draftRouteFromIcao || !draftRouteToIcao) return false;
-    return draftRouteFromIcao !== draftRouteToIcao;
-  }, [selectModeDraft, draftViewIcao, draftRouteFromIcao, draftRouteToIcao]);
+    return !!draftViewIcao;
+  }, [draftViewIcao]);
 
   const confirmSelection = () => {
     if (!canConfirmSelection) return;
-    const next =
-      selectModeDraft === "view"
-        ? [draftViewIcao].filter(Boolean)
-        : [draftRouteFromIcao, draftRouteToIcao].filter(Boolean);
+    const next = [draftViewIcao].filter(Boolean);
     setSelectedIcaos(next);
-    // 默认进入后 active 指向“起”（或单机场）
     setActiveIcao(next[0] || "");
   };
 
   const resetToSelection = () => {
-    const nextMode: "view" | "route" = selectedIcaos.length === 2 ? "route" : "view";
-    setSelectModeDraft(nextMode);
-    if (selectedIcaos.length === 2) {
-      setDraftRouteFromIcao(selectedIcaos[0] || "");
-      setDraftRouteToIcao(selectedIcaos[1] || "");
-      setDraftViewIcao(selectedIcaos[0] || "");
-    } else {
-      setDraftViewIcao(selectedIcaos[0] || "");
-      setDraftRouteFromIcao(selectedIcaos[0] || "");
-      setDraftRouteToIcao("");
-    }
+    setDraftViewIcao(selectedIcaos[0] || "");
     setSelectedIcaos([]);
     setActiveIcao("");
   };
@@ -364,9 +331,16 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
     if (isMobile) setSiderCollapsed(true);
   };
 
-  // 航路规划页面
-  if (showRouteMap) {
-    return <RouteMapPage onBack={() => setShowRouteMap(false)} />;
+  // 航线规划页面（整合后）
+  if (showRoutePlanning) {
+    return (
+      <RouteIntegratedPage
+        onBack={() => setShowRoutePlanning(false)}
+        isDark={isDark}
+        initialDepartureIcao={routeDepartureIcao}
+        initialArrivalIcao={routeArrivalIcao}
+      />
+    );
   }
 
   return (
@@ -381,7 +355,9 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
               alignItems: "center",
               justifyContent: "center",
               padding: 24,
-              background: token.colorBgLayout
+              paddingBottom: "calc(24px + env(safe-area-inset-bottom, 0px))",
+              background: token.colorBgLayout,
+              overflowY: "auto"
             }}
           >
             <div
@@ -397,30 +373,18 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
                 airports={airports as any}
                 airportsLoading={airportsLoading}
                 airportsError={airportsError}
-                mode={selectModeDraft}
-                onModeChange={setSelectModeDraft}
                 themeMode={themeMode}
                 onThemeModeChange={onThemeModeChange}
                 draftViewIcao={draftViewIcao}
                 onDraftViewIcaoChange={setDraftViewIcao}
-                draftRouteFromIcao={draftRouteFromIcao}
-                onDraftRouteFromIcaoChange={(icao) => {
-                  setDraftRouteFromIcao(icao);
-                  if (icao && draftRouteToIcao === icao) setDraftRouteToIcao("");
-                }}
-                draftRouteToIcao={draftRouteToIcao}
-                onDraftRouteToIcaoChange={(icao) => {
-                  setDraftRouteToIcao(icao);
-                  if (icao && draftRouteFromIcao === icao) setDraftRouteFromIcao("");
-                }}
                 canConfirm={canConfirmSelection}
                 onConfirm={confirmSelection}
-                onClear={() => {
-                  setDraftViewIcao("");
-                  setDraftRouteFromIcao("");
-                  setDraftRouteToIcao("");
-                }}
-                onEnterRouteMap={() => setShowRouteMap(true)}
+                onClear={() => setDraftViewIcao("")}
+                routeDepartureIcao={routeDepartureIcao}
+                onRouteDepartureChange={setRouteDepartureIcao}
+                routeArrivalIcao={routeArrivalIcao}
+                onRouteArrivalChange={setRouteArrivalIcao}
+                onEnterRoutePlanning={() => setShowRoutePlanning(true)}
               />
             </div>
           </div>
@@ -515,7 +479,7 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
             </Layout.Sider>
           )}
 
-          <Layout.Content style={{ padding: 12, overflow: "hidden", minHeight: 0 }}>
+          <Layout.Content style={{ padding: 12, paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))", overflow: "hidden", minHeight: 0 }}>
             <Layout style={{ height: "100%", background: token.colorBgLayout, minHeight: 0 }}>
               <Layout.Content
                 style={{
@@ -567,7 +531,7 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
               maskClosable
               destroyOnClose={false}
               styles={{
-                body: { padding: 0 },
+                body: { padding: 0, paddingBottom: "env(safe-area-inset-bottom, 0px)" },
                 header: { borderBottom: `1px solid ${token.colorBorderSecondary}` },
                 content: { background: token.colorBgContainer }
               }}
@@ -606,5 +570,3 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
     </div>
   );
 }
-
-

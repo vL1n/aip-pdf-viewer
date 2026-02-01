@@ -1,8 +1,9 @@
 /**
  * 航路解析面板组件
  * 输入航路字符串 → 解析 → 显示结果
+ * 支持智能填充起/降机场
  */
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import {
   Button,
   Input,
@@ -10,12 +11,10 @@ import {
   Space,
   Tag,
   Divider,
+  Typography,
   theme
 } from "antd";
-import {
-  EnvironmentOutlined,
-  SendOutlined
-} from "@ant-design/icons";
+import { SendOutlined } from "@ant-design/icons";
 import { apiRouteParse, type ParsedRoute, type ParsedRoutePoint } from "../api";
 
 export interface RouteParsePanelProps {
@@ -31,6 +30,48 @@ export interface RouteParsePanelProps {
   externalRouteInput?: string;
   /** 清除外部输入标记 */
   onExternalInputUsed?: () => void;
+  /** 起飞机场 ICAO（用于智能填充） */
+  departureIcao?: string;
+  /** 降落机场 ICAO（用于智能填充） */
+  arrivalIcao?: string;
+}
+
+/**
+ * 智能构建完整航路字符串
+ * 如果用户输入的航路首尾没有起/降机场，自动补充
+ */
+function buildFullRoute(input: string, departure: string, arrival: string): {
+  fullRoute: string;
+  addedDeparture: boolean;
+  addedArrival: boolean;
+} {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return {
+      fullRoute: `${departure} ${arrival}`,
+      addedDeparture: true,
+      addedArrival: true
+    };
+  }
+
+  const parts = trimmed.split(/\s+/);
+  const first = parts[0].toUpperCase();
+  const last = parts[parts.length - 1].toUpperCase();
+
+  let result = trimmed;
+  let addedDeparture = false;
+  let addedArrival = false;
+
+  if (first !== departure.toUpperCase()) {
+    result = `${departure} ${result}`;
+    addedDeparture = true;
+  }
+  if (last !== arrival.toUpperCase()) {
+    result = `${result} ${arrival}`;
+    addedArrival = true;
+  }
+
+  return { fullRoute: result, addedDeparture, addedArrival };
 }
 
 export function RouteParsePanel({
@@ -39,7 +80,9 @@ export function RouteParsePanel({
   parseResult,
   disabled = false,
   externalRouteInput,
-  onExternalInputUsed
+  onExternalInputUsed,
+  departureIcao = "",
+  arrivalIcao = ""
 }: RouteParsePanelProps) {
   const { token } = theme.useToken();
 
@@ -55,15 +98,42 @@ export function RouteParsePanel({
     }
   }, [externalRouteInput, routeInput, onExternalInputUsed]);
 
+  // 计算智能填充预览
+  const fillPreview = useMemo(() => {
+    if (!departureIcao || !arrivalIcao) return null;
+
+    const trimmed = routeInput.trim();
+    if (!trimmed) {
+      return { addedDeparture: true, addedArrival: true };
+    }
+
+    const parts = trimmed.split(/\s+/);
+    const first = parts[0].toUpperCase();
+    const last = parts[parts.length - 1].toUpperCase();
+
+    const addedDeparture = first !== departureIcao.toUpperCase();
+    const addedArrival = last !== arrivalIcao.toUpperCase();
+
+    if (!addedDeparture && !addedArrival) return null;
+    return { addedDeparture, addedArrival };
+  }, [routeInput, departureIcao, arrivalIcao]);
+
   // 解析航路
   const handleParse = useCallback(async () => {
-    if (!routeInput.trim()) return;
+    if (!routeInput.trim() && !departureIcao && !arrivalIcao) return;
 
     setParsing(true);
     setParseError(null);
 
     try {
-      const result = await apiRouteParse(routeInput);
+      // 智能填充起/降机场
+      let routeToSend = routeInput.trim();
+      if (departureIcao && arrivalIcao) {
+        const { fullRoute } = buildFullRoute(routeInput, departureIcao, arrivalIcao);
+        routeToSend = fullRoute;
+      }
+
+      const result = await apiRouteParse(routeToSend);
       if (result.success) {
         onParseSuccess(result);
       } else {
@@ -74,7 +144,7 @@ export function RouteParsePanel({
     } finally {
       setParsing(false);
     }
-  }, [routeInput, onParseSuccess]);
+  }, [routeInput, departureIcao, arrivalIcao, onParseSuccess]);
 
   // 清除
   const handleClear = useCallback(() => {
@@ -91,35 +161,65 @@ export function RouteParsePanel({
     }
   };
 
+  // 是否可以解析（有输入或有起降机场）
+  const canParse = routeInput.trim() || (departureIcao && arrivalIcao);
+
   return (
     <div>
+      {/* 起/降机场提示 */}
+      {departureIcao && arrivalIcao && (
+        <div style={{ marginBottom: 8 }}>
+          <Space size={4}>
+            <Tag color="red">{departureIcao}</Tag>
+            <span style={{ color: token.colorTextSecondary }}>→</span>
+            <Tag color="red">{arrivalIcao}</Tag>
+          </Space>
+        </div>
+      )}
+
       {/* 输入区 */}
-      <Space.Compact style={{ width: "100%" }}>
-        <Input
-          size="large"
-          placeholder="输入航路，如：ZSPD SHA3P PIMOL G471 VMB A593 BTO STAR2A ZGGG"
+      <div>
+        <Input.TextArea
+          placeholder={
+            departureIcao && arrivalIcao
+              ? "输入中间航路（可省略起降机场），如：SID WPT1 G471 WPT2 STAR"
+              : "输入航路，如：ZSPD SHA3P PIMOL G471 VMB A593 BTO STAR2A ZGGG"
+          }
           value={routeInput}
           onChange={(e) => setRouteInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          prefix={<EnvironmentOutlined style={{ color: token.colorTextSecondary }} />}
           disabled={parsing || disabled}
+          autoSize={{ minRows: 2, maxRows: 6 }}
+          style={{ marginBottom: 8 }}
         />
-        <Button
-          type="primary"
-          size="large"
-          icon={<SendOutlined />}
-          onClick={handleParse}
-          loading={parsing}
-          disabled={!routeInput.trim() || disabled}
-        >
-          解析
-        </Button>
-        {parseResult && (
-          <Button size="large" onClick={handleClear} disabled={disabled}>
-            清除
+        <Space>
+          <Button
+            type="primary"
+            icon={<SendOutlined />}
+            onClick={handleParse}
+            loading={parsing}
+            disabled={!canParse || disabled}
+          >
+            解析
           </Button>
-        )}
-      </Space.Compact>
+          {parseResult && (
+            <Button onClick={handleClear} disabled={disabled}>
+              清除
+            </Button>
+          )}
+        </Space>
+      </div>
+
+      {/* 智能填充提示 */}
+      {fillPreview && (
+        <div style={{ marginTop: 8 }}>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            将自动补充：
+            {fillPreview.addedDeparture && <Tag color="blue" style={{ marginLeft: 4 }}>起飞 {departureIcao}</Tag>}
+            {fillPreview.addedArrival && <Tag color="blue" style={{ marginLeft: 4 }}>降落 {arrivalIcao}</Tag>}
+          </Typography.Text>
+        </div>
+      )}
 
       {/* 错误信息 */}
       {parseError && (
