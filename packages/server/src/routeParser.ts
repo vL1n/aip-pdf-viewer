@@ -2,10 +2,15 @@
  * 航路解析器
  * 解析用户输入的标准航路描述，返回航点坐标序列
  * 
- * 输入格式：起飞机场ICAO SID 核心航路段 STAR 落地机场ICAO
- * 示例：ZSPD SHA3P PIMOL G471 VMB A593 BTO FU2A ZGGG
+ * 输入格式：起飞机场ICAO [SID] 核心航路段 [STAR] 落地机场ICAO
+ * 示例：
+ *   - 完整格式：ZSPD SHA3P PIMOL G471 VMB A593 BTO FU2A ZGGG
+ *   - 无 SID/STAR：ZSPD PIMOL G471 VMB A593 BTO ZGGG
+ *   - 仅 SID：ZSPD SHA3P PIMOL G471 VMB ZGGG
+ *   - 仅 STAR：ZSPD PIMOL G471 VMB FU2A ZGGG
  * 
- * 本期仅支持核心航路段解析
+ * 解析逻辑会自动判断起飞机场后的第一个元素是 SID 还是航点，
+ * 以及落地机场前的最后一个元素是 STAR 还是航点。
  */
 
 import { NavDatabase, type NavPoint } from "./navdb.js";
@@ -71,6 +76,16 @@ function isAirportCode(s: string): boolean {
 }
 
 /**
+ * 判断是否可能为 SID/STAR 程序名称
+ * SID/STAR 通常包含数字和字母的组合，如 SHA3P, FU2A, ATENA1X
+ * 格式：2-6 个字母数字混合，通常以数字+字母结尾
+ */
+function looksLikeProcedure(s: string): boolean {
+  // 包含数字的 3-8 字符字母数字组合，通常以数字或数字+字母结尾
+  return /^[A-Z]{2,6}\d[A-Z0-9]{0,2}$/i.test(s);
+}
+
+/**
  * 解析航路字符串
  */
 export function parseRoute(navDb: NavDatabase, routeString: string): ParsedRoute {
@@ -99,7 +114,7 @@ export function parseRoute(navDb: NavDatabase, routeString: string): ParsedRoute
 
   const elements = cleaned.split(" ").filter(Boolean);
   if (elements.length < 3) {
-    result.error = "航路格式不正确，至少需要：起飞机场 SID 核心航路 STAR 落地机场";
+    result.error = "航路格式不正确，至少需要：起飞机场 航路段 落地机场";
     return result;
   }
 
@@ -128,41 +143,90 @@ export function parseRoute(navDb: NavDatabase, routeString: string): ParsedRoute
     remark: "起飞机场"
   });
 
-  // 中间元素：SID, 核心航路, STAR
+  // 中间元素
   const middleElements = elements.slice(1, -1);
   
-  if (middleElements.length < 3) {
-    result.error = "航路格式不正确，需要包含 SID、核心航路段、STAR";
+  if (middleElements.length < 1) {
+    result.error = "航路格式不正确，需要包含航路信息";
     return result;
   }
 
-  // 第一个中间元素为 SID
-  result.sid = middleElements[0];
-  result.points.push({
-    ident: result.sid,
-    name: "标准离场程序",
-    lat: result.departure.lat,
-    lon: result.departure.lon,
-    type: "waypoint",
-    viaAirway: null,
-    isExplicit: true,
-    isAirport: false,
-    remark: `SID: ${result.sid}`
-  });
+  // 用上一个已知位置作为参考点，初始为起飞机场
+  let refLat = result.departure.lat;
+  let refLon = result.departure.lon;
 
-  // 最后一个中间元素为 STAR
-  result.star = middleElements[middleElements.length - 1];
+  // 智能判断第一个中间元素是 SID 还是航点
+  const firstElem = middleElements[0];
+  let coreStartIndex = 0;
+  
+  // 优先检查是否能在数据库中找到对应的航点/导航台
+  const firstAsWaypoint = navDb.findNavPointNear(firstElem, refLat, refLon);
+  const firstAsAirway = looksLikeAirwayCode(firstElem) ? navDb.findAirway(firstElem) : null;
+  
+  if (firstAsWaypoint) {
+    // 能找到航点，作为航点处理，不是 SID
+    result.sid = null;
+    coreStartIndex = 0;
+  } else if (firstAsAirway) {
+    // 这是航路代码，不是 SID
+    result.sid = null;
+    coreStartIndex = 0;
+  } else if (looksLikeProcedure(firstElem)) {
+    // 看起来像 SID/STAR 程序名称
+    result.sid = firstElem;
+    coreStartIndex = 1;
+    result.points.push({
+      ident: result.sid,
+      name: "标准离场程序",
+      lat: result.departure.lat,
+      lon: result.departure.lon,
+      type: "waypoint",
+      viaAirway: null,
+      isExplicit: true,
+      isAirport: false,
+      remark: `SID: ${result.sid}`
+    });
+  } else {
+    // 无法识别，尝试作为航点处理
+    result.sid = null;
+    coreStartIndex = 0;
+  }
 
-  // 核心航路段：中间的元素
-  const coreElements = middleElements.slice(1, -1);
+  // 智能判断最后一个中间元素是 STAR 还是航点
+  const lastElem = middleElements[middleElements.length - 1];
+  let coreEndIndex = middleElements.length;
+  
+  // 只有当有多个中间元素时才判断 STAR
+  if (middleElements.length > coreStartIndex) {
+    // 用落地机场作为参考点来查找最后一个元素
+    const lastAsWaypoint = navDb.findNavPointNear(lastElem, result.arrival.lat, result.arrival.lon);
+    const lastAsAirway = looksLikeAirwayCode(lastElem) ? navDb.findAirway(lastElem) : null;
+    
+    if (lastAsWaypoint) {
+      // 能找到航点，作为航点处理，不是 STAR
+      result.star = null;
+      coreEndIndex = middleElements.length;
+    } else if (lastAsAirway) {
+      // 这是航路代码，不是 STAR
+      result.star = null;
+      coreEndIndex = middleElements.length;
+    } else if (looksLikeProcedure(lastElem) && lastElem !== result.sid) {
+      // 看起来像 SID/STAR 程序名称，且不是已识别的 SID
+      result.star = lastElem;
+      coreEndIndex = middleElements.length - 1;
+    } else {
+      // 无法识别，尝试作为航点处理
+      result.star = null;
+      coreEndIndex = middleElements.length;
+    }
+  }
+
+  // 核心航路段
+  const coreElements = middleElements.slice(coreStartIndex, coreEndIndex);
   
   // 解析核心航路段
   let currentAirway: string | null = null;
   let lastWaypoint: NavPoint | null = null;
-  
-  // 用上一个已知位置作为参考点，初始为起飞机场
-  let refLat = result.departure.lat;
-  let refLon = result.departure.lon;
 
   for (let i = 0; i < coreElements.length; i++) {
     const elem = coreElements[i];
@@ -249,18 +313,20 @@ export function parseRoute(navDb: NavDatabase, routeString: string): ParsedRoute
     }
   }
 
-  // 添加 STAR 标记点
-  result.points.push({
-    ident: result.star,
-    name: "标准进场程序",
-    lat: result.arrival.lat,
-    lon: result.arrival.lon,
-    type: "waypoint",
-    viaAirway: null,
-    isExplicit: true,
-    isAirport: false,
-    remark: `STAR: ${result.star}`
-  });
+  // 添加 STAR 标记点（如果有）
+  if (result.star) {
+    result.points.push({
+      ident: result.star,
+      name: "标准进场程序",
+      lat: result.arrival.lat,
+      lon: result.arrival.lon,
+      type: "waypoint",
+      viaAirway: null,
+      isExplicit: true,
+      isAirport: false,
+      remark: `STAR: ${result.star}`
+    });
+  }
 
   // 添加落地机场为最后一个点
   result.points.push({

@@ -164,4 +164,47 @@ export async function apiRouteParse(route: string) {
   return await postJson<ParsedRoute>("/api/route/parse", { route });
 }
 
+// ---- VATSIM Tracking (VATSIM 追踪) ----
+
+/** VATSIM 飞行计划 */
+export interface VatsimFlightPlan {
+  flight_rules: string;
+  aircraft: string;
+  aircraft_short: string;
+  departure: string;
+  arrival: string;
+  alternate: string;
+  cruise_tas: string;
+  altitude: string;
+  route: string;
+}
+
+/** VATSIM 飞行员数据 */
+export interface VatsimPilot {
+  cid: number;
+  name: string;
+  callsign: string;
+  latitude: number;
+  longitude: number;
+  altitude: number;
+  groundspeed: number;
+  heading: number;
+  transponder: string;
+  flight_plan: VatsimFlightPlan | null;
+  last_updated: string;
+}
+
+/** VATSIM 数据响应 */
+export interface VatsimData {
+  pilots: VatsimPilot[];
+}
+
+/** 获取 VATSIM 数据并根据 CID 筛选飞行员 */
+export async function fetchVatsimPilot(cid: number): Promise<VatsimPilot | null> {
+  const res = await fetch("https://data.vatsim.net/v3/vatsim-data.json");
+  if (!res.ok) throw new Error(`VATSIM API 请求失败: ${res.status}`);
+  const data = (await res.json()) as VatsimData;
+  return data.pilots.find((p) => p.cid === cid) ?? null;
+}
+
 

@@ -13,19 +13,24 @@ import {
   Tag,
   Divider,
   theme,
-  Card
+  Card,
+  Switch,
+  Tooltip as AntTooltip
 } from "antd";
 import {
   EnvironmentOutlined,
   SendOutlined,
   ArrowLeftOutlined,
-  QuestionCircleOutlined
+  QuestionCircleOutlined,
+  UnorderedListOutlined,
+  CloseOutlined,
+  ImportOutlined
 } from "@ant-design/icons";
 import { MapContainer, TileLayer, Marker, Polyline, Popup, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
-import { apiRouteParse, apiRouteStatus, type ParsedRoute, type ParsedRoutePoint, type RouteStatus } from "../api";
+import { apiRouteParse, apiRouteStatus, fetchVatsimPilot, type ParsedRoute, type ParsedRoutePoint, type RouteStatus, type VatsimPilot } from "../api";
 
 // 修复 Leaflet 默认图标问题
 import iconUrl from "leaflet/dist/images/marker-icon.png";
@@ -62,6 +67,28 @@ const waypointIcon = createIcon("#3498db", 14); // 蓝色 - 航点
 const navaidIcon = createIcon("#9b59b6", 16); // 紫色 - 导航台
 const explicitWaypointIcon = createIcon("#2ecc71", 16); // 绿色 - 用户指定航点
 
+// 创建飞机图标（带朝向）
+const createAircraftIcon = (heading: number) => {
+  return L.divIcon({
+    className: "aircraft-marker",
+    html: `<div style="
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transform: rotate(${heading}deg);
+      filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));
+    ">
+      <svg viewBox="0 0 24 24" width="28" height="28" fill="#f39c12" stroke="#fff" stroke-width="0.5">
+        <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
+      </svg>
+    </div>`,
+    iconSize: [32, 32],
+    iconAnchor: [16, 16]
+  });
+};
+
 /** 根据航点类型获取图标 */
 function getMarkerIcon(point: ParsedRoutePoint) {
   if (point.isAirport) return airportIcon;
@@ -84,6 +111,27 @@ function FitBounds({ points }: { points: ParsedRoutePoint[] }) {
   return null;
 }
 
+/** 跟随 VATSIM 飞机位置的组件 */
+function FollowAircraft({ pilot, enabled }: { pilot: VatsimPilot | null; enabled: boolean }) {
+  const map = useMap();
+  const [hasInitialCenter, setHasInitialCenter] = useState(false);
+
+  useEffect(() => {
+    if (!enabled || !pilot) {
+      setHasInitialCenter(false);
+      return;
+    }
+
+    // 首次追踪时居中并设置缩放级别
+    if (!hasInitialCenter) {
+      map.setView([pilot.latitude, pilot.longitude], 8);
+      setHasInitialCenter(true);
+    }
+  }, [map, pilot, enabled, hasInitialCenter]);
+
+  return null;
+}
+
 export interface RouteMapPageProps {
   onBack: () => void;
 }
@@ -101,6 +149,14 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
   const [parseError, setParseError] = useState<string | null>(null);
 
   const [showHelp, setShowHelp] = useState(false);
+  const [showLegend, setShowLegend] = useState(false);
+
+  // VATSIM 追踪状态
+  const [trackVatsim, setTrackVatsim] = useState(false);
+  const [vatsimCid, setVatsimCid] = useState("");
+  const [vatsimPilot, setVatsimPilot] = useState<VatsimPilot | null>(null);
+  const [vatsimError, setVatsimError] = useState<string | null>(null);
+  const [vatsimLoading, setVatsimLoading] = useState(false);
 
   // 检查航路解析功能是否可用
   useEffect(() => {
@@ -116,6 +172,54 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
       }
     })();
   }, []);
+
+  // VATSIM 数据轮询
+  useEffect(() => {
+    if (!trackVatsim || !vatsimCid.trim()) {
+      setVatsimPilot(null);
+      setVatsimError(null);
+      return;
+    }
+
+    const cidNum = parseInt(vatsimCid.trim(), 10);
+    if (isNaN(cidNum)) {
+      setVatsimError("CID 必须是数字");
+      return;
+    }
+
+    let cancelled = false;
+
+    const fetchData = async () => {
+      setVatsimLoading(true);
+      try {
+        const pilot = await fetchVatsimPilot(cidNum);
+        if (cancelled) return;
+        if (pilot) {
+          setVatsimPilot(pilot);
+          setVatsimError(null);
+        } else {
+          setVatsimPilot(null);
+          setVatsimError(`未找到 CID ${cidNum} 的在线用户`);
+        }
+      } catch (e: any) {
+        if (cancelled) return;
+        setVatsimError(e?.message || "获取 VATSIM 数据失败");
+      } finally {
+        if (!cancelled) setVatsimLoading(false);
+      }
+    };
+
+    // 立即获取一次
+    fetchData();
+
+    // 每 3 秒轮询
+    const interval = setInterval(fetchData, 3000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [trackVatsim, vatsimCid]);
 
   // 解析航路
   const handleParse = useCallback(async () => {
@@ -177,6 +281,61 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
         <Typography.Title level={4} style={{ margin: 0 }}>
           航路规划
         </Typography.Title>
+
+        {/* 右侧空间推开 */}
+        <div style={{ flex: 1 }} />
+
+        {/* VATSIM 追踪控件 */}
+        <Space size="small">
+          <AntTooltip title="开启后将在地图上显示该用户的实时位置">
+            <Space size={4}>
+              <span style={{ color: token.colorTextSecondary, fontSize: 13 }}>追踪 VATSIM</span>
+              <Switch
+                size="small"
+                checked={trackVatsim}
+                onChange={setTrackVatsim}
+                loading={vatsimLoading}
+              />
+            </Space>
+          </AntTooltip>
+          <Input
+            size="small"
+            placeholder="CID"
+            style={{ width: 100 }}
+            value={vatsimCid}
+            onChange={(e) => setVatsimCid(e.target.value)}
+            disabled={!trackVatsim}
+          />
+          {vatsimPilot && (
+            <>
+              <Tag color="green" style={{ margin: 0 }}>
+                {vatsimPilot.callsign}
+              </Tag>
+              {vatsimPilot.flight_plan && vatsimPilot.flight_plan.route && (
+                <AntTooltip title="导入航路到输入框">
+                  <Button
+                    size="small"
+                    icon={<ImportOutlined />}
+                    onClick={() => {
+                      const fp = vatsimPilot.flight_plan!;
+                      // 组合完整航路：起飞机场 + 航路 + 落地机场
+                      const fullRoute = `${fp.departure} ${fp.route} ${fp.arrival}`;
+                      setRouteInput(fullRoute);
+                    }}
+                  >
+                    导入航路
+                  </Button>
+                </AntTooltip>
+              )}
+            </>
+          )}
+          {vatsimError && (
+            <Tag color="red" style={{ margin: 0 }}>
+              {vatsimError}
+            </Tag>
+          )}
+        </Space>
+
         <Button
           type="text"
           icon={<QuestionCircleOutlined />}
@@ -296,29 +455,41 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
                 padding: "8px 16px",
                 background: token.colorSuccessBg,
                 borderBottom: `1px solid ${token.colorSuccessBorder}`,
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                flexWrap: "wrap",
+                overflowX: "auto",
                 flexShrink: 0
               }}
             >
-              <Tag color="red">{parseResult.departure?.ident}</Tag>
-              {parseResult.sid && <Tag color="orange">SID: {parseResult.sid}</Tag>}
-              <span style={{ color: token.colorTextSecondary }}>→</span>
-              <Tag color="blue">{parseResult.points.filter((p) => !p.isAirport && p.isExplicit).length} 个航点</Tag>
-              <span style={{ color: token.colorTextSecondary }}>→</span>
-              {parseResult.star && <Tag color="orange">STAR: {parseResult.star}</Tag>}
-              <Tag color="green">{parseResult.arrival?.ident}</Tag>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  whiteSpace: "nowrap"
+                }}
+              >
+                {parseResult.points.map((point, idx) => (
+                  <React.Fragment key={`${point.ident}-${idx}`}>
+                    {idx > 0 && (
+                      <span style={{ color: token.colorTextSecondary, fontSize: 12 }}>→</span>
+                    )}
+                    <Tag
+                      color={point.isAirport ? "red" : point.isExplicit ? "blue" : "default"}
+                      style={{ margin: 0 }}
+                    >
+                      {point.ident}
+                    </Tag>
+                  </React.Fragment>
+                ))}
 
-              {parseResult.unknownElements.length > 0 && (
-                <>
-                  <Divider type="vertical" />
-                  <span style={{ color: token.colorWarning }}>
-                    未识别: {parseResult.unknownElements.join(", ")}
-                  </span>
-                </>
-              )}
+                {parseResult.unknownElements.length > 0 && (
+                  <>
+                    <Divider type="vertical" />
+                    <span style={{ color: token.colorWarning, fontSize: 12 }}>
+                      未识别: {parseResult.unknownElements.join(", ")}
+                    </span>
+                  </>
+                )}
+              </div>
             </div>
           )}
 
@@ -333,6 +504,42 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
+
+              {/* 跟随 VATSIM 飞机 */}
+              <FollowAircraft pilot={vatsimPilot} enabled={trackVatsim} />
+
+              {/* VATSIM 飞机标记 */}
+              {vatsimPilot && (
+                <Marker
+                  position={[vatsimPilot.latitude, vatsimPilot.longitude]}
+                  icon={createAircraftIcon(vatsimPilot.heading)}
+                >
+                  <Tooltip permanent direction="top" offset={[0, -16]}>
+                    <strong>{vatsimPilot.callsign}</strong>
+                  </Tooltip>
+                  <Popup>
+                    <div style={{ minWidth: 180 }}>
+                      <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>
+                        {vatsimPilot.callsign}
+                      </div>
+                      <div style={{ fontSize: 12, color: "#666" }}>
+                        <div>CID: {vatsimPilot.cid}</div>
+                        <div>高度: {vatsimPilot.altitude} ft</div>
+                        <div>地速: {vatsimPilot.groundspeed} kts</div>
+                        <div>航向: {vatsimPilot.heading}°</div>
+                        {vatsimPilot.flight_plan && (
+                          <>
+                            <div style={{ marginTop: 4, borderTop: "1px solid #eee", paddingTop: 4 }}>
+                              <div>{vatsimPilot.flight_plan.departure} → {vatsimPilot.flight_plan.arrival}</div>
+                              <div>机型: {vatsimPilot.flight_plan.aircraft_short}</div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </Popup>
+                </Marker>
+              )}
 
               {parseResult && parseResult.points.length > 0 && (
                 <>
@@ -377,35 +584,65 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
             </MapContainer>
 
             {/* 图例 */}
-            <Card
-              size="small"
+            <div
               style={{
                 position: "absolute",
                 bottom: 20,
                 right: 20,
-                zIndex: 1000,
-                opacity: 0.95
+                zIndex: 1000
               }}
             >
-              <Space direction="vertical" size={4}>
-                <Space>
-                  <div style={{ width: 14, height: 14, background: "#e74c3c", borderRadius: "50%" }} />
-                  <span>机场</span>
-                </Space>
-                <Space>
-                  <div style={{ width: 14, height: 14, background: "#2ecc71", borderRadius: "50%" }} />
-                  <span>指定航点</span>
-                </Space>
-                <Space>
-                  <div style={{ width: 14, height: 14, background: "#3498db", borderRadius: "50%" }} />
-                  <span>中间航点</span>
-                </Space>
-                <Space>
-                  <div style={{ width: 14, height: 14, background: "#9b59b6", borderRadius: "50%" }} />
-                  <span>VOR/NDB</span>
-                </Space>
-              </Space>
-            </Card>
+              {showLegend ? (
+                <Card
+                  size="small"
+                  style={{ opacity: 0.95 }}
+                  title={
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontSize: 12 }}>图例</span>
+                      <Button type="text" size="small" icon={<CloseOutlined />} onClick={() => setShowLegend(false)} style={{ marginRight: -8 }} />
+                    </div>
+                  }
+                  styles={{ header: { minHeight: 32, padding: "0 12px" }, body: { padding: "8px 12px" } }}
+                >
+                  <Space direction="vertical" size={4}>
+                    <Space>
+                      <div style={{ width: 14, height: 14, background: "#e74c3c", borderRadius: "50%" }} />
+                      <span>机场</span>
+                    </Space>
+                    <Space>
+                      <div style={{ width: 14, height: 14, background: "#2ecc71", borderRadius: "50%" }} />
+                      <span>指定航点</span>
+                    </Space>
+                    <Space>
+                      <div style={{ width: 14, height: 14, background: "#3498db", borderRadius: "50%" }} />
+                      <span>中间航点</span>
+                    </Space>
+                    <Space>
+                      <div style={{ width: 14, height: 14, background: "#9b59b6", borderRadius: "50%" }} />
+                      <span>VOR/NDB</span>
+                    </Space>
+                    {vatsimPilot && (
+                      <Space>
+                        <div style={{ width: 14, height: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          <svg viewBox="0 0 24 24" width="14" height="14" fill="#f39c12">
+                            <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
+                          </svg>
+                        </div>
+                        <span>VATSIM</span>
+                      </Space>
+                    )}
+                  </Space>
+                </Card>
+              ) : (
+                <Button
+                  type="primary"
+                  shape="circle"
+                  icon={<UnorderedListOutlined />}
+                  onClick={() => setShowLegend(true)}
+                  style={{ opacity: 0.9, boxShadow: "0 2px 6px rgba(0,0,0,0.2)" }}
+                />
+              )}
+            </div>
           </div>
         </>
       )}
