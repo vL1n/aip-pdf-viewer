@@ -18,6 +18,7 @@ import {
   Spin,
   Card,
   Tabs,
+  Drawer,
   theme,
   Tooltip as AntTooltip
 } from "antd";
@@ -29,7 +30,8 @@ import {
   FullscreenOutlined,
   AimOutlined,
   EnvironmentOutlined,
-  ThunderboltOutlined
+  ThunderboltOutlined,
+  MenuOutlined
 } from "@ant-design/icons";
 import { MapContainer, TileLayer, Marker, Polyline, Popup, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
@@ -205,6 +207,20 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
 
   // 外部航路输入（用于 VATSIM 导入）
   const [externalRouteInput, setExternalRouteInput] = useState<string | undefined>(undefined);
+
+  // 移动端适配：底部抽屉
+  const [isMobile, setIsMobile] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // 检测窗口宽度
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
+  }, []);
 
   // 检查航路解析功能是否可用
   useEffect(() => {
@@ -410,66 +426,137 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
           />
         </div>
       ) : (
-        /* 左右分栏布局：左侧控制面板(40%)，右侧地图(60%) */
-        <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-          {/* 左侧：功能 Tabs 和控制面板 */}
-          <div
-            style={{
-              width: "40%",
-              minWidth: 320,
-              maxWidth: 600,
-              padding: "12px 16px",
-              background: token.colorBgContainer,
-              borderRight: `1px solid ${token.colorBorderSecondary}`,
-              overflowY: "auto",
-              flexShrink: 0
-            }}
-          >
-            <Tabs
-              activeKey={activeTab}
-              onChange={(key) => setActiveTab(key as TabKey)}
-              items={[
-                {
-                  key: "route",
-                  label: (
-                    <Space>
-                      <EnvironmentOutlined />
-                      航路解析
-                    </Space>
-                  ),
-                  children: (
-                    <RouteParsePanel
-                      parseResult={parseResult}
-                      onParseSuccess={handleParseSuccess}
-                      onClear={handleParseClear}
-                      externalRouteInput={externalRouteInput}
-                      onExternalInputUsed={() => setExternalRouteInput(undefined)}
-                    />
-                  )
-                },
-                {
-                  key: "fit",
-                  label: (
-                    <Space>
-                      <ThunderboltOutlined />
-                      航路拟合
-                    </Space>
-                  ),
-                  children: (
-                    <RouteFitPanel
-                      kmlResult={kmlResult}
-                      fitResult={fitResult}
-                      onRouteFitted={handleRouteFitted}
-                      onClear={handleFitClear}
-                    />
-                  )
-                }
-              ]}
-            />
-          </div>
+        /* 响应式布局：桌面端左右分栏，移动端地图全屏+底部抽屉 */
+        <div style={{ flex: 1, display: "flex", minHeight: 0, position: "relative" }}>
+          {/* 桌面端：左侧控制面板 */}
+          {!isMobile && (
+            <div
+              style={{
+                width: "40%",
+                minWidth: 320,
+                maxWidth: 600,
+                padding: "12px 16px",
+                background: token.colorBgContainer,
+                borderRight: `1px solid ${token.colorBorderSecondary}`,
+                overflowY: "auto",
+                flexShrink: 0
+              }}
+            >
+              <Tabs
+                activeKey={activeTab}
+                onChange={(key) => setActiveTab(key as TabKey)}
+                items={[
+                  {
+                    key: "route",
+                    label: (
+                      <Space>
+                        <EnvironmentOutlined />
+                        航路解析
+                      </Space>
+                    ),
+                    children: (
+                      <RouteParsePanel
+                        parseResult={parseResult}
+                        onParseSuccess={handleParseSuccess}
+                        onClear={handleParseClear}
+                        externalRouteInput={externalRouteInput}
+                        onExternalInputUsed={() => setExternalRouteInput(undefined)}
+                      />
+                    )
+                  },
+                  {
+                    key: "fit",
+                    label: (
+                      <Space>
+                        <ThunderboltOutlined />
+                        航路拟合
+                      </Space>
+                    ),
+                    children: (
+                      <RouteFitPanel
+                        kmlResult={kmlResult}
+                        fitResult={fitResult}
+                        onRouteFitted={handleRouteFitted}
+                        onClear={handleFitClear}
+                      />
+                    )
+                  }
+                ]}
+              />
+            </div>
+          )}
 
-          {/* 右侧：地图区域 */}
+          {/* 地图区域（移动端全屏，桌面端占剩余空间） */}
           <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+            {/* 移动端：打开抽屉的按钮 - 放在右上角避免与地图缩放控件冲突 */}
+            {isMobile && (
+              <Button
+                type="primary"
+                icon={<MenuOutlined />}
+                onClick={() => setDrawerOpen(true)}
+                style={{
+                  position: "absolute",
+                  top: 10,
+                  right: 10,
+                  zIndex: 1000,
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.2)"
+                }}
+              >
+                控制面板
+              </Button>
+            )}
+
+            {/* 移动端：底部抽屉 */}
+            <Drawer
+              title="航路规划"
+              placement="bottom"
+              open={isMobile && drawerOpen}
+              onClose={() => setDrawerOpen(false)}
+              height="70vh"
+              styles={{ body: { padding: "12px 16px" } }}
+            >
+              <Tabs
+                activeKey={activeTab}
+                onChange={(key) => setActiveTab(key as TabKey)}
+                items={[
+                  {
+                    key: "route",
+                    label: (
+                      <Space>
+                        <EnvironmentOutlined />
+                        航路解析
+                      </Space>
+                    ),
+                    children: (
+                      <RouteParsePanel
+                        parseResult={parseResult}
+                        onParseSuccess={handleParseSuccess}
+                        onClear={handleParseClear}
+                        externalRouteInput={externalRouteInput}
+                        onExternalInputUsed={() => setExternalRouteInput(undefined)}
+                      />
+                    )
+                  },
+                  {
+                    key: "fit",
+                    label: (
+                      <Space>
+                        <ThunderboltOutlined />
+                        航路拟合
+                      </Space>
+                    ),
+                    children: (
+                      <RouteFitPanel
+                        kmlResult={kmlResult}
+                        fitResult={fitResult}
+                        onRouteFitted={handleRouteFitted}
+                        onClear={handleFitClear}
+                      />
+                    )
+                  }
+                ]}
+              />
+            </Drawer>
             <MapContainer
               center={[35, 105]} // 中国中心
               zoom={5}
@@ -620,11 +707,11 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
 
             </MapContainer>
 
-            {/* 地图控制按钮 */}
+            {/* 地图控制按钮 - 使用 safe-area-inset 适配 iOS */}
             <div
               style={{
                 position: "absolute",
-                bottom: 20,
+                bottom: "calc(20px + env(safe-area-inset-bottom, 0px))",
                 right: 20,
                 zIndex: 1000,
                 display: "flex",
