@@ -11,6 +11,8 @@ import type { IndexManager } from "./indexManager.js";
 import { initFavoritesSchema } from "./sqlite.js";
 import { NavDatabase } from "./navdb.js";
 import { parseRoute } from "./routeParser.js";
+import { parseKml } from "./kmlParser.js";
+import { fitRoute, type FitOptions } from "./routeFitter.js";
 
 function isInsideRoot(rootPath: string, filePath: string) {
   const root = path.resolve(rootPath);
@@ -483,6 +485,80 @@ export function createServer({ db, favoritesDb, navDb, rootPath, webDistPath, in
 
     const segment = navDatabase.getAirwaySegment(airway, from, to);
     return { airway, from, to, segment, count: segment?.length ?? 0 };
+  });
+
+  // ---- KML Parsing (KML 解析) ----
+
+  /** 解析 KML 文件 */
+  app.post("/api/kml/parse", async (req, reply) => {
+    const body = (req.body || {}) as { content?: string };
+    const kmlContent = typeof body.content === "string" ? body.content : "";
+
+    if (!kmlContent) {
+      return reply.code(400).send({
+        success: false,
+        error: "请提供 KML 文件内容",
+        points: []
+      });
+    }
+
+    try {
+      const result = parseKml(kmlContent);
+      return result;
+    } catch (err: any) {
+      return reply.code(500).send({
+        success: false,
+        error: err?.message || "解析 KML 失败",
+        points: []
+      });
+    }
+  });
+
+  /** 根据航迹拟合航路 */
+  app.post("/api/route/fit", async (req, reply) => {
+    if (!navDatabase) {
+      return reply.code(503).send({
+        success: false,
+        error: "导航数据库不可用（未找到 nd.db3）",
+        waypoints: [],
+        routeString: ""
+      });
+    }
+
+    const body = (req.body || {}) as {
+      points?: Array<{ lat: number; lon: number; altitude?: number }>;
+      options?: FitOptions;
+    };
+
+    const points = Array.isArray(body.points) ? body.points : [];
+
+    if (points.length < 2) {
+      return reply.code(400).send({
+        success: false,
+        error: "航迹点数量不足，至少需要 2 个点",
+        waypoints: [],
+        routeString: ""
+      });
+    }
+
+    // 转换为 KmlTrackPoint 格式
+    const trackPoints = points.map(p => ({
+      lat: p.lat,
+      lon: p.lon,
+      altitude: p.altitude ?? 0
+    }));
+
+    try {
+      const result = fitRoute(navDatabase, trackPoints, body.options);
+      return result;
+    } catch (err: any) {
+      return reply.code(500).send({
+        success: false,
+        error: err?.message || "拟合航路失败",
+        waypoints: [],
+        routeString: ""
+      });
+    }
   });
 
   if (webDistPath) {

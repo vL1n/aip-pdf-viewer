@@ -207,4 +207,69 @@ export async function fetchVatsimPilot(cid: number): Promise<VatsimPilot | null>
   return data.pilots.find((p) => p.cid === cid) ?? null;
 }
 
+// ---- KML Parsing (KML 解析) ----
+
+/** KML 航迹点 */
+export interface KmlTrackPoint {
+  lon: number;
+  lat: number;
+  altitude: number;
+  timestamp?: string;
+  heading?: number;
+  speed?: number;
+}
+
+/** KML 解析结果 */
+export interface KmlParseResult {
+  success: boolean;
+  error: string | null;
+  name: string | null;
+  points: KmlTrackPoint[];
+  totalPoints: number;
+}
+
+/** 解析 KML 文件内容 */
+export async function apiKmlParse(content: string) {
+  return await postJson<KmlParseResult>("/api/kml/parse", { content });
+}
+
+// ---- Route Fitting (航路拟合) ----
+
+/** 拟合后的航点 */
+export interface FittedWaypoint {
+  ident: string;
+  name: string | null;
+  lat: number;
+  lon: number;
+  type: "airport" | "waypoint" | "navaid";
+  distanceFromTrack: number;
+  viaAirway: string | null;
+  isAirport: boolean;
+}
+
+/** 拟合选项 */
+export interface FitOptions {
+  maxDistanceKm?: number;
+  sampleIntervalKm?: number;
+  useAirways?: boolean;
+}
+
+/** 拟合结果 */
+export interface FitRouteResult {
+  success: boolean;
+  error: string | null;
+  waypoints: FittedWaypoint[];
+  routeString: string;
+  sampledPointsCount: number;
+  matchedWaypointsCount: number;
+}
+
+/** 根据航迹拟合航路 */
+export async function apiRouteFit(
+  points: Array<{ lat: number; lon: number; altitude?: number }>,
+  options?: FitOptions
+) {
+  return await postJson<FitRouteResult>("/api/route/fit", { points, options });
+}
+
 

@@ -229,6 +229,149 @@ export class NavDatabase {
   }
 
   /**
+   * 查找距离指定坐标最近的航点/导航台
+   * @param lat 纬度
+   * @param lon 经度
+   * @param maxDistanceKm 最大距离（公里），超过此距离返回 null
+   * @returns 最近的航点，如果没有找到则返回 null
+   */
+  findNearestNavPoint(lat: number, lon: number, maxDistanceKm: number = 50): NavPoint | null {
+    // 粗略的经纬度范围过滤（1度约111公里）
+    const degRange = maxDistanceKm / 111 * 1.5; // 加50%余量
+    const latMin = lat - degRange;
+    const latMax = lat + degRange;
+    const lonMin = lon - degRange;
+    const lonMax = lon + degRange;
+
+    // 查询航点
+    const waypoints = this.db
+      .prepare(`
+        SELECT Ident, Name, Latitude, Longtitude FROM Waypoints 
+        WHERE Latitude BETWEEN ? AND ? AND Longtitude BETWEEN ? AND ?
+      `)
+      .all(latMin, latMax, lonMin, lonMax) as Array<{ Ident: string; Name: string; Latitude: number; Longtitude: number }>;
+
+    // 查询导航台
+    const navaids = this.db
+      .prepare(`
+        SELECT Ident, Name, Latitude, Longtitude FROM Navaids 
+        WHERE Latitude BETWEEN ? AND ? AND Longtitude BETWEEN ? AND ?
+      `)
+      .all(latMin, latMax, lonMin, lonMax) as Array<{ Ident: string; Name: string; Latitude: number; Longtitude: number }>;
+
+    // 合并候选点
+    const candidates: Array<{ point: NavPoint; distance: number }> = [];
+
+    for (const row of waypoints) {
+      const dist = this.haversineDistance(lat, lon, row.Latitude, row.Longtitude);
+      if (dist <= maxDistanceKm) {
+        candidates.push({
+          point: { ident: row.Ident, name: row.Name, lat: row.Latitude, lon: row.Longtitude, type: "waypoint" },
+          distance: dist
+        });
+      }
+    }
+
+    for (const row of navaids) {
+      const dist = this.haversineDistance(lat, lon, row.Latitude, row.Longtitude);
+      if (dist <= maxDistanceKm) {
+        candidates.push({
+          point: { ident: row.Ident, name: row.Name, lat: row.Latitude, lon: row.Longtitude, type: "navaid" },
+          distance: dist
+        });
+      }
+    }
+
+    if (candidates.length === 0) return null;
+
+    // 返回最近的
+    candidates.sort((a, b) => a.distance - b.distance);
+    return candidates[0].point;
+  }
+
+  /**
+   * 查找连接两个航点的航路（直接相邻）
+   * @param fromIdent 起始航点标识符
+   * @param toIdent 结束航点标识符
+   * @returns 航路代码，如果没有找到则返回 null
+   */
+  findConnectingAirway(fromIdent: string, toIdent: string): string | null {
+    // 首先找到两个航点的 ID
+    const fromWpt = this.db
+      .prepare(`SELECT ID FROM Waypoints WHERE Ident = ? COLLATE NOCASE`)
+      .all(fromIdent.toUpperCase()) as Array<{ ID: number }>;
+    
+    const toWpt = this.db
+      .prepare(`SELECT ID FROM Waypoints WHERE Ident = ? COLLATE NOCASE`)
+      .all(toIdent.toUpperCase()) as Array<{ ID: number }>;
+
+    if (fromWpt.length === 0 || toWpt.length === 0) return null;
+
+    // 查找包含这两个航点的航路段
+    const fromIds = fromWpt.map(w => w.ID);
+    const toIds = toWpt.map(w => w.ID);
+
+    // 构建 IN 子句
+    const fromPlaceholders = fromIds.map(() => "?").join(", ");
+    const toPlaceholders = toIds.map(() => "?").join(", ");
+
+    // 查找正向连接 (from -> to)
+    const forwardQuery = `
+      SELECT DISTINCT a.Ident FROM AirwayLegs l
+      JOIN Airways a ON a.ID = l.AirwayID
+      WHERE l.Waypoint1ID IN (${fromPlaceholders}) AND l.Waypoint2ID IN (${toPlaceholders})
+    `;
+    
+    const forwardResult = this.db.prepare(forwardQuery).get(...fromIds, ...toIds) as { Ident: string } | undefined;
+    if (forwardResult) return forwardResult.Ident;
+
+    // 查找反向连接 (to -> from)
+    const reverseQuery = `
+      SELECT DISTINCT a.Ident FROM AirwayLegs l
+      JOIN Airways a ON a.ID = l.AirwayID
+      WHERE l.Waypoint1ID IN (${toPlaceholders}) AND l.Waypoint2ID IN (${fromPlaceholders})
+    `;
+    
+    const reverseResult = this.db.prepare(reverseQuery).get(...toIds, ...fromIds) as { Ident: string } | undefined;
+    if (reverseResult) return reverseResult.Ident;
+
+    return null;
+  }
+
+  /**
+   * 查找包含两个航点的共同航路（不一定直接相邻）
+   * 这个方法更宽松，只要两个航点都在同一条航路上就返回该航路
+   * @param ident1 航点1标识符
+   * @param ident2 航点2标识符
+   * @returns 航路代码，如果没有找到则返回 null
+   */
+  findCommonAirway(ident1: string, ident2: string): string | null {
+    // 首先尝试直接相邻的航路
+    const direct = this.findConnectingAirway(ident1, ident2);
+    if (direct) return direct;
+
+    // 查找两个航点各自所在的航路
+    const query = `
+      SELECT DISTINCT a.Ident
+      FROM Airways a
+      WHERE a.ID IN (
+        SELECT l.AirwayID FROM AirwayLegs l
+        JOIN Waypoints w ON (w.ID = l.Waypoint1ID OR w.ID = l.Waypoint2ID)
+        WHERE w.Ident = ? COLLATE NOCASE
+      )
+      AND a.ID IN (
+        SELECT l.AirwayID FROM AirwayLegs l
+        JOIN Waypoints w ON (w.ID = l.Waypoint1ID OR w.ID = l.Waypoint2ID)
+        WHERE w.Ident = ? COLLATE NOCASE
+      )
+      LIMIT 1
+    `;
+    
+    const result = this.db.prepare(query).get(ident1.toUpperCase(), ident2.toUpperCase()) as { Ident: string } | undefined;
+    return result?.Ident ?? null;
+  }
+
+  /**
    * 获取航路上两个航点之间的所有中间航点
    * @param airwayIdent 航路标识符 (如 G471)
    * @param fromIdent 起始航点标识符 (如 PIMOL)

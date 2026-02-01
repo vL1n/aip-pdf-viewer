@@ -1,38 +1,55 @@
 /**
  * 航路地图页面
- * 用户输入航路 → 解析 → 在地图上渲染航点和航线
+ * 整合功能：航路解析、航路拟合、KML 导入、VATSIM 追踪
+ * 
+ * 页面结构：
+ * - 顶部：标题栏
+ * - 顶部工具栏：VATSIM 追踪 + KML 导入（独立的叠加功能）
+ * - 左右分栏：
+ *   - 左侧 40%：Tabs（航路解析 / 航路拟合）
+ *   - 右侧 60%：地图
  */
 import React, { useState, useEffect, useCallback } from "react";
 import {
   Button,
-  Input,
   Alert,
   Space,
   Typography,
   Spin,
-  Tag,
-  Divider,
-  theme,
   Card,
-  Switch,
+  Tabs,
+  theme,
   Tooltip as AntTooltip
 } from "antd";
 import {
-  EnvironmentOutlined,
-  SendOutlined,
   ArrowLeftOutlined,
   QuestionCircleOutlined,
   UnorderedListOutlined,
   CloseOutlined,
-  ImportOutlined,
+  FullscreenOutlined,
   AimOutlined,
-  FullscreenOutlined
+  EnvironmentOutlined,
+  ThunderboltOutlined
 } from "@ant-design/icons";
 import { MapContainer, TileLayer, Marker, Polyline, Popup, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
-import { apiRouteParse, apiRouteStatus, fetchVatsimPilot, type ParsedRoute, type ParsedRoutePoint, type RouteStatus, type VatsimPilot } from "../api";
+import {
+  apiRouteStatus,
+  type ParsedRoute,
+  type ParsedRoutePoint,
+  type RouteStatus,
+  type VatsimPilot,
+  type KmlParseResult,
+  type FitRouteResult,
+  type FittedWaypoint
+} from "../api";
+
+import { RouteParsePanel } from "./RouteParsePanel";
+import { RouteFitPanel } from "./RouteFitPanel";
+import { VatsimTrackBar } from "./VatsimTrackBar";
+import { KmlUploadBar } from "./KmlUploadBar";
 
 // 修复 Leaflet 默认图标问题
 import iconUrl from "leaflet/dist/images/marker-icon.png";
@@ -68,6 +85,7 @@ const airportIcon = createIcon("#e74c3c", 14); // 红色 - 机场
 const waypointIcon = createIcon("#3498db", 8); // 蓝色 - 航点
 const navaidIcon = createIcon("#9b59b6", 10); // 紫色 - 导航台
 const explicitWaypointIcon = createIcon("#2ecc71", 10); // 绿色 - 用户指定航点
+const fittedWaypointIcon = createIcon("#27ae60", 10); // 深绿色 - 拟合航点
 
 // 创建飞机图标（带朝向）
 const createAircraftIcon = (heading: number) => {
@@ -99,16 +117,26 @@ function getMarkerIcon(point: ParsedRoutePoint) {
   return waypointIcon;
 }
 
-/** 自动调整地图视野的组件 */
-function FitBounds({ points, trigger }: { points: ParsedRoutePoint[]; trigger: number }) {
+/** 根据拟合航点类型获取图标 */
+function getFittedMarkerIcon(wp: FittedWaypoint) {
+  if (wp.isAirport) return airportIcon;
+  if (wp.type === "navaid") return navaidIcon;
+  return fittedWaypointIcon;
+}
+
+/** 自动调整地图视野的组件 - 只在 trigger 变化时调整，不随 points 变化 */
+function FitBounds({ points, trigger }: { points: Array<{ lat: number; lon: number }>; trigger: number }) {
   const map = useMap();
+  const [lastTrigger, setLastTrigger] = useState(0);
 
   useEffect(() => {
-    if (points.length === 0) return;
-
-    const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lon]));
-    map.fitBounds(bounds, { padding: [50, 50] });
-  }, [map, points, trigger]);
+    // 只有当 trigger 真正变化时才调整视野
+    if (trigger > lastTrigger && points.length > 0) {
+      const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lon]));
+      map.fitBounds(bounds, { padding: [50, 50] });
+      setLastTrigger(trigger);
+    }
+  }, [map, points, trigger, lastTrigger]);
 
   return null;
 }
@@ -147,29 +175,36 @@ export interface RouteMapPageProps {
   onBack: () => void;
 }
 
+type TabKey = "route" | "fit";
+
 export function RouteMapPage({ onBack }: RouteMapPageProps) {
   const { token } = theme.useToken();
 
-  // 状态
+  // 导航数据库状态
   const [routeStatus, setRouteStatus] = useState<RouteStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
 
-  const [routeInput, setRouteInput] = useState("");
-  const [parsing, setParsing] = useState(false);
-  const [parseResult, setParseResult] = useState<ParsedRoute | null>(null);
-  const [parseError, setParseError] = useState<string | null>(null);
+  // 当前激活的 Tab
+  const [activeTab, setActiveTab] = useState<TabKey>("route");
 
+  // 航路解析状态
+  const [parseResult, setParseResult] = useState<ParsedRoute | null>(null);
+
+  // KML 导入状态
+  const [kmlResult, setKmlResult] = useState<KmlParseResult | null>(null);
+  const [fitResult, setFitResult] = useState<FitRouteResult | null>(null);
+
+  // VATSIM 追踪状态
+  const [vatsimPilot, setVatsimPilot] = useState<VatsimPilot | null>(null);
+
+  // 地图控制
   const [showHelp, setShowHelp] = useState(false);
   const [showLegend, setShowLegend] = useState(false);
   const [fitBoundsTrigger, setFitBoundsTrigger] = useState(0);
   const [vatsimCenterTrigger, setVatsimCenterTrigger] = useState(0);
 
-  // VATSIM 追踪状态
-  const [trackVatsim, setTrackVatsim] = useState(false);
-  const [vatsimCid, setVatsimCid] = useState("");
-  const [vatsimPilot, setVatsimPilot] = useState<VatsimPilot | null>(null);
-  const [vatsimError, setVatsimError] = useState<string | null>(null);
-  const [vatsimLoading, setVatsimLoading] = useState(false);
+  // 外部航路输入（用于 VATSIM 导入）
+  const [externalRouteInput, setExternalRouteInput] = useState<string | undefined>(undefined);
 
   // 检查航路解析功能是否可用
   useEffect(() => {
@@ -186,83 +221,77 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
     })();
   }, []);
 
-  // VATSIM 数据轮询
-  useEffect(() => {
-    if (!trackVatsim || !vatsimCid.trim()) {
-      setVatsimPilot(null);
-      setVatsimError(null);
-      return;
-    }
+  // 处理航路解析成功
+  const handleParseSuccess = useCallback((result: ParsedRoute) => {
+    setParseResult(result);
+    // 自动调整地图视野
+    setFitBoundsTrigger((v) => v + 1);
+  }, []);
 
-    const cidNum = parseInt(vatsimCid.trim(), 10);
-    if (isNaN(cidNum)) {
-      setVatsimError("CID 必须是数字");
-      return;
-    }
-
-    let cancelled = false;
-
-    const fetchData = async () => {
-      setVatsimLoading(true);
-      try {
-        const pilot = await fetchVatsimPilot(cidNum);
-        if (cancelled) return;
-        if (pilot) {
-          setVatsimPilot(pilot);
-          setVatsimError(null);
-        } else {
-          setVatsimPilot(null);
-          setVatsimError(`未找到 CID ${cidNum} 的在线用户`);
-        }
-      } catch (e: any) {
-        if (cancelled) return;
-        setVatsimError(e?.message || "获取 VATSIM 数据失败");
-      } finally {
-        if (!cancelled) setVatsimLoading(false);
-      }
-    };
-
-    // 立即获取一次
-    fetchData();
-
-    // 每 3 秒轮询
-    const interval = setInterval(fetchData, 3000);
-
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [trackVatsim, vatsimCid]);
-
-  // 解析航路
-  const handleParse = useCallback(async () => {
-    if (!routeInput.trim()) return;
-
-    setParsing(true);
-    setParseError(null);
+  // 清除航路解析
+  const handleParseClear = useCallback(() => {
     setParseResult(null);
+  }, []);
 
-    try {
-      const result = await apiRouteParse(routeInput);
-      if (result.success) {
-        setParseResult(result);
-      } else {
-        setParseError(result.error || "解析失败");
-      }
-    } catch (e: any) {
-      setParseError(e?.message || "解析请求失败");
-    } finally {
-      setParsing(false);
-    }
-  }, [routeInput]);
+  // 处理 KML 解析成功
+  const handleKmlParsed = useCallback((result: KmlParseResult) => {
+    setKmlResult(result);
+    setFitResult(null);
+    // 自动调整地图视野
+    setFitBoundsTrigger((v) => v + 1);
+  }, []);
 
-  // 回车提交
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleParse();
+  // 处理航路拟合成功
+  const handleRouteFitted = useCallback((result: FitRouteResult) => {
+    setFitResult(result);
+    // 自动调整地图视野
+    setFitBoundsTrigger((v) => v + 1);
+  }, []);
+
+  // 清除 KML（但保留拟合结果，因为用户可能还需要）
+  const handleKmlClear = useCallback(() => {
+    setKmlResult(null);
+    // 清除 KML 时也清除拟合结果，因为拟合是基于 KML 的
+    setFitResult(null);
+  }, []);
+
+  // 清除拟合结果
+  const handleFitClear = useCallback(() => {
+    setFitResult(null);
+  }, []);
+
+  // 处理 VATSIM 导入航路
+  const handleImportVatsimRoute = useCallback((route: string) => {
+    setActiveTab("route");
+    setExternalRouteInput(route);
+  }, []);
+
+  // 处理定位到 VATSIM 飞机
+  const handleLocateAircraft = useCallback(() => {
+    setVatsimCenterTrigger((v) => v + 1);
+  }, []);
+
+  // 收集所有需要显示的地图数据点用于自动调整视野
+  const getAllMapPoints = useCallback((): Array<{ lat: number; lon: number }> => {
+    const points: Array<{ lat: number; lon: number }> = [];
+
+    // 航路解析的点（始终显示）
+    if (parseResult) {
+      points.push(...parseResult.points.map((p) => ({ lat: p.lat, lon: p.lon })));
     }
-  };
+
+    // KML 航迹点（始终显示）
+    if (kmlResult) {
+      points.push(...kmlResult.points.map((p) => ({ lat: p.lat, lon: p.lon })));
+    }
+
+    // 拟合航点（始终显示）
+    if (fitResult) {
+      points.push(...fitResult.waypoints.map((wp) => ({ lat: wp.lat, lon: wp.lon })));
+    }
+
+    return points;
+  }, [parseResult, kmlResult, fitResult]);
 
   // 示例航路
   const exampleRoute = "ZSPD SHA3P PIMOL G471 VMB A593 BTO A470 LAMEN STAR2A ZGGG";
@@ -295,59 +324,7 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
           航路规划
         </Typography.Title>
 
-        {/* 右侧空间推开 */}
         <div style={{ flex: 1 }} />
-
-        {/* VATSIM 追踪控件 */}
-        <Space size="small">
-          <AntTooltip title="开启后将在地图上显示该用户的实时位置">
-            <Space size={4}>
-              <span style={{ color: token.colorTextSecondary, fontSize: 13 }}>追踪 VATSIM</span>
-              <Switch
-                size="small"
-                checked={trackVatsim}
-                onChange={setTrackVatsim}
-                loading={vatsimLoading}
-              />
-            </Space>
-          </AntTooltip>
-          <Input
-            size="small"
-            placeholder="CID"
-            style={{ width: 100 }}
-            value={vatsimCid}
-            onChange={(e) => setVatsimCid(e.target.value)}
-            disabled={!trackVatsim}
-          />
-          {vatsimPilot && (
-            <>
-              <Tag color="green" style={{ margin: 0 }}>
-                {vatsimPilot.callsign}
-              </Tag>
-              {vatsimPilot.flight_plan && vatsimPilot.flight_plan.route && (
-                <AntTooltip title="导入航路到输入框">
-                  <Button
-                    size="small"
-                    icon={<ImportOutlined />}
-                    onClick={() => {
-                      const fp = vatsimPilot.flight_plan!;
-                      // 组合完整航路：起飞机场 + 航路 + 落地机场
-                      const fullRoute = `${fp.departure} ${fp.route} ${fp.arrival}`;
-                      setRouteInput(fullRoute);
-                    }}
-                  >
-                    导入航路
-                  </Button>
-                </AntTooltip>
-              )}
-            </>
-          )}
-          {vatsimError && (
-            <Tag color="red" style={{ margin: 0 }}>
-              {vatsimError}
-            </Tag>
-          )}
-        </Space>
 
         <Button
           type="text"
@@ -368,21 +345,15 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
           }}
         >
           <Typography.Title level={5} style={{ margin: "0 0 8px 0" }}>
-            航路输入格式说明
+            使用说明
           </Typography.Title>
           <Typography.Paragraph style={{ margin: 0 }}>
-            请按照以下格式输入航路：<br />
-            <code style={{ background: token.colorFillSecondary, padding: "2px 6px", borderRadius: 4 }}>
+            <strong>航路解析：</strong>输入标准航路字符串，系统会解析并在地图上显示航线。<br />
+            格式：<code style={{ background: token.colorFillSecondary, padding: "2px 6px", borderRadius: 4 }}>
               起飞机场ICAO SID名称 核心航路段 STAR名称 落地机场ICAO
             </code>
-          </Typography.Paragraph>
-          <Typography.Paragraph style={{ margin: "8px 0 0 0" }}>
-            <strong>核心航路段格式：</strong>航点和航路交替出现，如 <code>PIMOL G471 VMB A593 BTO</code>
             <br />
-            <em>（当前版本仅解析核心航路段，SID/STAR 仅作为标记显示）</em>
-          </Typography.Paragraph>
-          <Typography.Paragraph style={{ margin: "8px 0 0 0" }}>
-            <strong>示例：</strong>
+            示例：
             <code
               style={{
                 background: token.colorFillSecondary,
@@ -391,7 +362,8 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
                 cursor: "pointer"
               }}
               onClick={() => {
-                setRouteInput(exampleRoute);
+                setActiveTab("route");
+                setExternalRouteInput(exampleRoute);
                 setShowHelp(false);
               }}
             >
@@ -399,8 +371,29 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
             </code>
             <span style={{ marginLeft: 8, color: token.colorTextSecondary }}>(点击填充)</span>
           </Typography.Paragraph>
+          <Typography.Paragraph style={{ margin: "8px 0 0 0" }}>
+            <strong>KML 导入：</strong>上传 FlightRadar24 等导出的 KML 文件，系统会解析航迹并在地图上显示。
+            点击"拟合航路"可自动匹配最近的航点并生成航路。
+          </Typography.Paragraph>
+          <Typography.Paragraph style={{ margin: "8px 0 0 0" }}>
+            <strong>VATSIM 追踪：</strong>输入 VATSIM CID，开启追踪后会在地图上实时显示飞机位置。
+            可以导入飞行员的飞行计划到航路解析面板。
+          </Typography.Paragraph>
         </div>
       )}
+
+      {/* 工具栏：VATSIM 追踪 + KML 导入（独立的叠加功能，始终可用） */}
+      <VatsimTrackBar
+        pilot={vatsimPilot}
+        onPilotUpdate={setVatsimPilot}
+        onImportRoute={handleImportVatsimRoute}
+        onLocateAircraft={handleLocateAircraft}
+      />
+      <KmlUploadBar
+        kmlResult={kmlResult}
+        onKmlParsed={handleKmlParsed}
+        onClear={handleKmlClear}
+      />
 
       {/* 状态检查 */}
       {statusLoading ? (
@@ -417,96 +410,65 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
           />
         </div>
       ) : (
-        <>
-          {/* 输入区 */}
+        /* 左右分栏布局：左侧控制面板(40%)，右侧地图(60%) */
+        <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+          {/* 左侧：功能 Tabs 和控制面板 */}
           <div
             style={{
+              width: "40%",
+              minWidth: 320,
+              maxWidth: 600,
               padding: "12px 16px",
               background: token.colorBgContainer,
-              borderBottom: `1px solid ${token.colorBorderSecondary}`,
+              borderRight: `1px solid ${token.colorBorderSecondary}`,
+              overflowY: "auto",
               flexShrink: 0
             }}
           >
-            <Space.Compact style={{ width: "100%" }}>
-              <Input
-                size="large"
-                placeholder="输入航路，如：ZSPD SHA3P PIMOL G471 VMB A593 BTO STAR2A ZGGG"
-                value={routeInput}
-                onChange={(e) => setRouteInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                prefix={<EnvironmentOutlined style={{ color: token.colorTextSecondary }} />}
-                disabled={parsing}
-              />
-              <Button
-                type="primary"
-                size="large"
-                icon={<SendOutlined />}
-                onClick={handleParse}
-                loading={parsing}
-                disabled={!routeInput.trim()}
-              >
-                解析
-              </Button>
-            </Space.Compact>
-
-            {parseError && (
-              <Alert
-                style={{ marginTop: 12 }}
-                type="error"
-                showIcon
-                message={parseError}
-                closable
-                onClose={() => setParseError(null)}
-              />
-            )}
+            <Tabs
+              activeKey={activeTab}
+              onChange={(key) => setActiveTab(key as TabKey)}
+              items={[
+                {
+                  key: "route",
+                  label: (
+                    <Space>
+                      <EnvironmentOutlined />
+                      航路解析
+                    </Space>
+                  ),
+                  children: (
+                    <RouteParsePanel
+                      parseResult={parseResult}
+                      onParseSuccess={handleParseSuccess}
+                      onClear={handleParseClear}
+                      externalRouteInput={externalRouteInput}
+                      onExternalInputUsed={() => setExternalRouteInput(undefined)}
+                    />
+                  )
+                },
+                {
+                  key: "fit",
+                  label: (
+                    <Space>
+                      <ThunderboltOutlined />
+                      航路拟合
+                    </Space>
+                  ),
+                  children: (
+                    <RouteFitPanel
+                      kmlResult={kmlResult}
+                      fitResult={fitResult}
+                      onRouteFitted={handleRouteFitted}
+                      onClear={handleFitClear}
+                    />
+                  )
+                }
+              ]}
+            />
           </div>
 
-          {/* 解析结果信息 */}
-          {parseResult && (
-            <div
-              style={{
-                padding: "8px 16px",
-                background: token.colorSuccessBg,
-                borderBottom: `1px solid ${token.colorSuccessBorder}`,
-                overflowX: "auto",
-                flexShrink: 0
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                  whiteSpace: "nowrap"
-                }}
-              >
-                {parseResult.points.map((point, idx) => (
-                  <React.Fragment key={`${point.ident}-${idx}`}>
-                    {idx > 0 && (
-                      <span style={{ color: token.colorTextSecondary, fontSize: 12 }}>→</span>
-                    )}
-                    <Tag
-                      color={point.isAirport ? "red" : point.isExplicit ? "blue" : "default"}
-                      style={{ margin: 0 }}
-                    >
-                      {point.ident}
-                    </Tag>
-                  </React.Fragment>
-                ))}
-
-                {parseResult.unknownElements.length > 0 && (
-                  <>
-                    <Divider type="vertical" />
-                    <span style={{ color: token.colorWarning, fontSize: 12 }}>
-                      未识别: {parseResult.unknownElements.join(", ")}
-                    </span>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* 地图区域 */}
+          {/* 右侧：地图区域 */}
           <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
             <MapContainer
               center={[35, 105]} // 中国中心
@@ -518,8 +480,11 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
 
+              {/* 自动调整视野 */}
+              <FitBounds points={getAllMapPoints()} trigger={fitBoundsTrigger} />
+
               {/* 跟随 VATSIM 飞机 */}
-              <FollowAircraft pilot={vatsimPilot} enabled={trackVatsim} centerTrigger={vatsimCenterTrigger} />
+              <FollowAircraft pilot={vatsimPilot} enabled={!!vatsimPilot} centerTrigger={vatsimCenterTrigger} />
 
               {/* VATSIM 飞机标记 */}
               {vatsimPilot && (
@@ -555,11 +520,68 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
                 </Marker>
               )}
 
+              {/* KML 航迹（始终显示，不依赖于激活的 Tab） */}
+              {kmlResult && kmlResult.points.length > 0 && (
+                <>
+                  {/* KML 航迹 - 橙色虚线 */}
+                  <Polyline
+                    positions={kmlResult.points.map((p) => [p.lat, p.lon])}
+                    pathOptions={{
+                      color: "#e67e22",
+                      weight: 2,
+                      opacity: 0.7,
+                      dashArray: "8, 6"
+                    }}
+                  />
+                </>
+              )}
+
+              {/* 拟合航路（始终显示，不依赖于激活的 Tab） */}
+              {fitResult && fitResult.waypoints.length > 0 && (
+                <>
+                  {/* 拟合航线 - 绿色实线 */}
+                  <Polyline
+                    positions={fitResult.waypoints.map((wp) => [wp.lat, wp.lon])}
+                    pathOptions={{
+                      color: "#27ae60",
+                      weight: 3,
+                      opacity: 0.8
+                    }}
+                  />
+
+                  {/* 拟合航点标记 */}
+                  {fitResult.waypoints.map((wp, idx) => (
+                    <Marker
+                      key={`fit-${wp.ident}-${idx}`}
+                      position={[wp.lat, wp.lon]}
+                      icon={getFittedMarkerIcon(wp)}
+                    >
+                      <Tooltip permanent={wp.isAirport} direction="top" offset={[0, -10]}>
+                        <strong>{wp.ident}</strong>
+                        {wp.viaAirway && <span style={{ marginLeft: 4, opacity: 0.7 }}>via {wp.viaAirway}</span>}
+                      </Tooltip>
+                      <Popup>
+                        <div>
+                          <strong>{wp.ident}</strong>
+                          {wp.name && <div style={{ color: "#666" }}>{wp.name}</div>}
+                          <div style={{ fontSize: 12, color: "#999" }}>
+                            {wp.lat.toFixed(4)}°N, {wp.lon.toFixed(4)}°E
+                          </div>
+                          <div style={{ fontSize: 12, color: "#999" }}>
+                            距航迹: {wp.distanceFromTrack.toFixed(1)} km
+                          </div>
+                          {wp.viaAirway && <div style={{ color: "#52c41a" }}>经由航路: {wp.viaAirway}</div>}
+                        </div>
+                      </Popup>
+                    </Marker>
+                  ))}
+                </>
+              )}
+
+              {/* 航路解析的航线和航点（始终显示，不依赖于激活的 Tab） */}
               {parseResult && parseResult.points.length > 0 && (
                 <>
-                  <FitBounds points={parseResult.points} trigger={fitBoundsTrigger} />
-
-                  {/* 航线 */}
+                  {/* 航线 - 蓝色实线 */}
                   <Polyline
                     positions={parseResult.points.map((p) => [p.lat, p.lon])}
                     pathOptions={{
@@ -572,7 +594,7 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
                   {/* 航点标记 */}
                   {parseResult.points.map((point, idx) => (
                     <Marker
-                      key={`${point.ident}-${idx}`}
+                      key={`route-${point.ident}-${idx}`}
                       position={[point.lat, point.lon]}
                       icon={getMarkerIcon(point)}
                     >
@@ -595,6 +617,7 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
                   ))}
                 </>
               )}
+
             </MapContainer>
 
             {/* 地图控制按钮 */}
@@ -617,14 +640,14 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
                     type="primary"
                     shape="circle"
                     icon={<AimOutlined />}
-                    onClick={() => setVatsimCenterTrigger((v) => v + 1)}
+                    onClick={handleLocateAircraft}
                     style={{ opacity: 0.9, boxShadow: "0 2px 6px rgba(0,0,0,0.2)" }}
                   />
                 </AntTooltip>
               )}
 
-              {/* 航路居中按钮 */}
-              {parseResult && parseResult.points.length > 0 && (
+              {/* 航路/航迹居中按钮 */}
+              {getAllMapPoints().length > 0 && (
                 <AntTooltip title="航路居中" placement="left">
                   <Button
                     type="primary"
@@ -666,6 +689,18 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
                       <div style={{ width: 14, height: 14, background: "#9b59b6", borderRadius: "50%" }} />
                       <span>VOR/NDB</span>
                     </Space>
+                    <Space>
+                      <div style={{ width: 30, height: 3, background: "#3498db" }} />
+                      <span>解析航路</span>
+                    </Space>
+                    <Space>
+                      <div style={{ width: 30, height: 2, background: "#e67e22", borderTop: "2px dashed #e67e22" }} />
+                      <span>KML 航迹</span>
+                    </Space>
+                    <Space>
+                      <div style={{ width: 30, height: 3, background: "#27ae60" }} />
+                      <span>拟合航路</span>
+                    </Space>
                     {vatsimPilot && (
                       <Space>
                         <div style={{ width: 14, height: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -689,7 +724,7 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
               )}
             </div>
           </div>
-        </>
+        </div>
       )}
     </div>
   );
