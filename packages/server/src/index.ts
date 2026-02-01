@@ -18,6 +18,7 @@ program
     "SQLite 收藏文件路径（仅 favorites）",
     process.env.AIP_FAV_DB || process.env.EAIP_FAV_DB || path.resolve(".data/favorites.sqlite")
   )
+  .option("--nav-db <path>", "导航数据库路径 (nd.db3)", process.env.AIP_NAV_DB || process.env.EAIP_NAV_DB || "")
   .option("--rebuild-db", "删除旧索引库并重建（遇到损坏/结构变更时用）", false)
   .option("--port <port>", "HTTP 端口", (v) => parseInt(v, 10), Number(process.env.PORT || 13001))
   .option("--host <host>", "HTTP 监听地址", process.env.HOST || "0.0.0.0")
@@ -29,6 +30,7 @@ async function main() {
     root: string;
     db: string;
     favDb: string;
+    navDb: string;
     rebuildDb: boolean;
     port: number;
     host: string;
@@ -55,6 +57,18 @@ async function main() {
   const db = openDb({ dbPath: opts.db });
   const favoritesDb = openDb({ dbPath: opts.favDb });
 
+  // 导航数据库：可选，用于航路解析
+  let navDb: ReturnType<typeof openDb> | null = null;
+  const navDbPath = opts.navDb || path.join(rootPath, "nd.db3");
+  if (fs.existsSync(navDbPath)) {
+    navDb = openDb({ dbPath: navDbPath, readonly: true });
+    // eslint-disable-next-line no-console
+    console.log(`已加载导航数据库: ${navDbPath}`);
+  } else {
+    // eslint-disable-next-line no-console
+    console.log(`未找到导航数据库: ${navDbPath}（航路解析功能不可用）`);
+  }
+
   const indexManager = new IndexManager(db);
 
   let webDistPath: string | undefined;
@@ -70,7 +84,7 @@ async function main() {
       webDistPath = fs.existsSync(c1) ? c1 : c2;
     }
   }
-  const app = createServer({ db, favoritesDb, rootPath, webDistPath, indexManager });
+  const app = createServer({ db, favoritesDb, navDb, rootPath, webDistPath, indexManager });
 
   await app.listen({ port: opts.port, host: opts.host });
   app.log.info({ rootPath, db: opts.db, favoritesDb: opts.favDb }, "server started");

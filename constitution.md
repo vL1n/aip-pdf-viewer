@@ -8,6 +8,7 @@
 
 - 启动时扫描本地目录（支持嵌套）→ 写入 SQLite 索引（含 FTS 搜索）→ 启动 HTTP 服务
 - 前端页面：机场列表 + 目录树 + 搜索 + 收藏 + 点击内嵌查看 PDF
+- **航路规划**：输入标准航路字符串 → 解析航点坐标 → 在地图上可视化航线
 
 ---
 
@@ -16,8 +17,9 @@
 | 层面 | 技术 |
 |------|------|
 | **后端** | Node.js + TypeScript + Fastify + better-sqlite3 |
-| **前端** | React 18 + TypeScript + Vite + Ant Design + react-pdf-viewer |
+| **前端** | React 18 + TypeScript + Vite + Ant Design + react-pdf-viewer + Leaflet |
 | **数据库** | SQLite (WAL 模式) + FTS5 全文搜索 |
+| **导航数据** | nd.db3 (航点/航路/机场坐标，只读) |
 | **桌面端** | Electron (macOS) / C# Launcher (Windows) |
 | **容器化** | Docker (单容器：后端 + 前端静态托管) |
 | **包管理** | pnpm (Monorepo Workspace) |
@@ -70,7 +72,9 @@ packages/server/
 │   ├── scan.ts           # 目录扫描、PDF/CSV 解析
 │   ├── csv.ts            # CSV 文件读取 (支持 GBK)
 │   ├── tree.ts           # 目录树构建
-│   └── types.ts          # 类型定义
+│   ├── types.ts          # 类型定义
+│   ├── navdb.ts          # 导航数据库封装 (nd.db3 查询)
+│   └── routeParser.ts    # 航路解析器 (航点/航路段解析)
 ├── dist/                 # TypeScript 编译产物
 ├── package.json
 └── tsconfig.json
@@ -92,6 +96,20 @@ packages/server/
 |------|------|
 | `favorites` | 用户收藏记录 (rel_path, icao, created_at_ms) |
 
+#### 导航数据库 (`nd.db3`，只读)
+
+用于航路解析功能，从航图目录自动加载（路径：`{AIP_ROOT}/nd.db3`）。
+
+| 表名 | 说明 |
+|------|------|
+| `Airports` | 机场数据 (ICAO, Name, Latitude, Longtitude) |
+| `Waypoints` | 航点数据 (Ident, Latitude, Longtitude) |
+| `Navaids` | 导航台数据 (VOR/NDB 等) |
+| `Airways` | 航路定义 (Ident) |
+| `AirwayLegs` | 航路段 (AirwayID, Waypoint1ID, Waypoint2ID) |
+| `Terminals` | 终端程序 (SID/STAR) |
+| `TerminalLegs` | 终端程序段 |
+
 ### API 端点
 
 | 端点 | 方法 | 说明 |
@@ -106,6 +124,9 @@ packages/server/
 | `/api/file/:id` | GET | 获取文件元数据 |
 | `/api/pdf/:id` | GET | 流式输出 PDF 文件 (支持 Range) |
 | `/api/favorites/*` | GET/POST | 收藏管理 (添加/移除/导入/导出) |
+| `/api/route/status` | GET | 航路解析功能状态 (nd.db3 是否可用) |
+| `/api/route/parse` | POST | 解析航路字符串，返回航点坐标序列 |
+| `/api/route/segment` | GET | 查询航路段（调试用） |
 
 ### 索引流程
 
@@ -119,6 +140,39 @@ packages/server/
 - 支持 SSE 实时推送进度
 - 前端显示"索引构建进度条"
 
+### 航路解析流程
+
+```
+用户输入航路字符串
+        │
+        ▼
+┌──────────────────────────────────────────────────────────────┐
+│  格式：起飞ICAO SID 核心航路段 STAR 落地ICAO                   │
+│  示例：ZSPD SHA3P PIMOL G471 VMB A593 BTO FU2A ZGGG           │
+└──────────────────────────────────────────────────────────────┘
+        │
+        ▼
+┌──────────────────────────────────────────────────────────────┐
+│                       routeParser.ts                          │
+│  1. 解析起飞/落地机场 (查询 Airports 表)                        │
+│  2. 提取 SID/STAR 名称 (当前版本不展开)                         │
+│  3. 解析核心航路段：                                           │
+│     - 识别航路代码 (查询 Airways 表确认)                        │
+│     - 识别航点代码 (优先选择距离最近的同名航点)                   │
+│     - 查询航段中间点 (BFS 遍历 AirwayLegs)                      │
+└──────────────────────────────────────────────────────────────┘
+        │
+        ▼
+┌──────────────────────────────────────────────────────────────┐
+│  输出：航点数组 [{ident, lat, lon, type, viaAirway, ...}]     │
+│  - isExplicit: 用户指定的点 vs 航路中间点                       │
+│  - viaAirway: 该点经由哪条航路                                 │
+└──────────────────────────────────────────────────────────────┘
+        │
+        ▼
+    前端 Leaflet 地图渲染
+```
+
 ---
 
 ## 前端架构 (`packages/web`)
@@ -130,6 +184,7 @@ packages/server/
 - **Ant Design 5**: UI 组件库
 - **@react-pdf-viewer**: PDF 渲染
 - **pdfjs-dist**: PDF.js 底层库
+- **Leaflet + react-leaflet**: 地图渲染 (航路可视化)
 
 ### 目录结构
 
@@ -142,11 +197,12 @@ packages/web/
 │   ├── styles.css             # 全局样式
 │   ├── pdfjs-dist-shim.ts     # PDF.js 兼容层
 │   ├── components/
-│   │   ├── AirportGate.tsx    # 机场选择页面
+│   │   ├── AirportGate.tsx    # 机场选择页面 (含航路规划入口)
 │   │   ├── AppHeader.tsx      # 顶部导航栏
 │   │   ├── IndexStatusBar.tsx # 索引进度条
 │   │   ├── SidebarPanel.tsx   # 侧边栏 (目录树/搜索)
-│   │   └── PdfViewerPanel.tsx # PDF 预览面板
+│   │   ├── PdfViewerPanel.tsx # PDF 预览面板
+│   │   └── RouteMapPage.tsx   # 航路地图页面 (Leaflet)
 │   ├── hooks/
 │   │   └── useThemeMode.ts    # 主题模式 Hook
 │   └── selectors/
@@ -167,6 +223,7 @@ packages/web/
 │                                                             │
 │  ┌─────────────────┐                                        │
 │  │  AirportGate    │  <- 首次进入：选择机场 (查看/航线模式)     │
+│  │  [航路规划入口]  │     或点击"航路规划"进入地图页面          │
 │  └─────────────────┘                                        │
 │                                                             │
 ├──────────────────────┬──────────────────────────────────────┤
@@ -180,6 +237,28 @@ packages/web/
 ├──────────────────────┴──────────────────────────────────────┤
 │                     AppHeader                               │
 │   (机场导航 / 打开新窗口 / 收藏导入导出 / 主题切换)              │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│                   RouteMapPage (航路规划)                    │
+├─────────────────────────────────────────────────────────────┤
+│  [返回] 航路规划                               [帮助]        │
+├─────────────────────────────────────────────────────────────┤
+│  输入航路：[ZSPD SHA3P PIMOL G471 VMB ... ZGGG] [解析]      │
+├─────────────────────────────────────────────────────────────┤
+│  ZSPD → SID:SHA3P → 5个航点 → STAR:FU2A → ZGGG             │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│                    Leaflet 地图                              │
+│                                                             │
+│        ● 机场(红) ── ● 航点(蓝/绿) ── ● VOR(紫)              │
+│                                                             │
+│                                           ┌───────────┐     │
+│                                           │ 图例       │     │
+│                                           │ ● 机场    │     │
+│                                           │ ● 指定点  │     │
+│                                           │ ● 中间点  │     │
+│                                           └───────────┘     │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -302,7 +381,7 @@ pnpm docker:redeploy          # 一键部署 Docker
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                             用户浏览器                                   │
-│                         (React + Ant Design)                            │
+│                    (React + Ant Design + Leaflet)                       │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
                                     │ HTTP / SSE
@@ -312,14 +391,17 @@ pnpm docker:redeploy          # 一键部署 Docker
 │  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────────────┐ │
 │  │ /api/tree  │  │ /api/search│  │ /api/pdf/* │  │ /api/index/stream  │ │
 │  └────────────┘  └────────────┘  └────────────┘  └────────────────────┘ │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │           /api/route/parse  (航路解析)                              │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
-                    ┌───────────────┼───────────────┐
-                    ▼               ▼               ▼
-            ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
-            │ index.sqlite│  │favorites.   │  │  PDF Files  │
-            │ (FTS5索引)   │  │  sqlite     │  │ (本地目录)   │
-            └─────────────┘  └─────────────┘  └─────────────┘
+                    ┌───────────────┼───────────────┬───────────────┐
+                    ▼               ▼               ▼               ▼
+            ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+            │ index.sqlite│  │favorites.   │  │  PDF Files  │  │   nd.db3    │
+            │ (FTS5索引)   │  │  sqlite     │  │ (本地目录)   │  │ (导航数据)   │
+            └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘
 ```
 
 ---
@@ -340,6 +422,7 @@ pnpm docker:redeploy          # 一键部署 Docker
 | `AIP_ROOT` / `EAIP_ROOT` | 航图 PDF 根目录 |
 | `AIP_DB` / `EAIP_DB` | 索引库路径 |
 | `AIP_FAV_DB` / `EAIP_FAV_DB` | 收藏库路径 |
+| `AIP_NAV_DB` / `EAIP_NAV_DB` | 导航数据库路径 (nd.db3)，默认为 `{AIP_ROOT}/nd.db3` |
 | `PORT` | 后端端口 |
 | `HOST` | 监听地址 |
 | `VITE_API_TARGET` | 前端代理目标 |
@@ -369,6 +452,8 @@ pnpm docker:redeploy          # 一键部署 Docker
 | @react-pdf-viewer/core | ^3.12.0 | PDF 渲染 |
 | pdfjs-dist | ^4.10.38 | PDF.js |
 | vite | ^6.0.5 | 构建工具 |
+| leaflet | ^1.9.4 | 地图渲染 |
+| react-leaflet | ^4.2.1 | React Leaflet 组件 |
 
 ---
 
@@ -384,9 +469,21 @@ pnpm docker:redeploy          # 一键部署 Docker
 
 本项目是一个典型的 **Monorepo + 全栈** 架构：
 
-1. **后端** (Fastify + SQLite) 负责目录扫描、索引构建、API 服务
-2. **前端** (React + Vite) 负责用户界面、PDF 预览
+1. **后端** (Fastify + SQLite) 负责目录扫描、索引构建、API 服务、航路解析
+2. **前端** (React + Vite + Leaflet) 负责用户界面、PDF 预览、航路地图可视化
 3. **桌面端** (Electron/C# Launcher) 提供跨平台独立运行能力
 4. **Docker** 提供容器化部署方案
 
 项目采用 pnpm workspace 管理多包依赖，TypeScript 保证类型安全，支持开发/生产/Docker 多种运行模式。
+
+### 航路规划功能说明
+
+航路规划功能允许用户输入标准航路字符串，系统会：
+1. 解析起飞/落地机场坐标
+2. 识别 SID/STAR（当前版本仅标记，不展开具体程序）
+3. 解析核心航路段，自动补充航路上的所有中间航点
+4. 在 Leaflet 地图上渲染完整航线
+
+**输入格式**：`起飞机场ICAO SID名称 核心航路段 STAR名称 落地机场ICAO`
+
+**示例**：`ZSHC ABVL8D ABVIL H24 ISNIR H161 P366 H165 P490 A581 XISLI XIS1L ZPPP`

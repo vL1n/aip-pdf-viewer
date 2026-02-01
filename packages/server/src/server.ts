@@ -9,6 +9,8 @@ import type Database from "better-sqlite3";
 import { buildTree } from "./tree.js";
 import type { IndexManager } from "./indexManager.js";
 import { initFavoritesSchema } from "./sqlite.js";
+import { NavDatabase } from "./navdb.js";
+import { parseRoute } from "./routeParser.js";
 
 function isInsideRoot(rootPath: string, filePath: string) {
   const root = path.resolve(rootPath);
@@ -39,18 +41,22 @@ function buildFtsMatch(q: string) {
 export type CreateServerOptions = {
   db: Database.Database; // index db
   favoritesDb: Database.Database;
+  navDb: Database.Database | null; // navigation db (nd.db3), optional
   rootPath: string;
   webDistPath?: string;
   indexManager: IndexManager;
 };
 
-export function createServer({ db, favoritesDb, rootPath, webDistPath, indexManager }: CreateServerOptions) {
+export function createServer({ db, favoritesDb, navDb, rootPath, webDistPath, indexManager }: CreateServerOptions) {
   const app = fastify({
     logger: true
   });
 
   // 确保收藏表存在（独立 SQLite；不依赖索引构建是否完成）
   initFavoritesSchema(favoritesDb);
+
+  // 导航数据库封装（可选）
+  const navDatabase = navDb ? new NavDatabase(navDb) : null;
 
   app.get("/api/health", async () => ({ ok: true }));
 
@@ -415,6 +421,68 @@ export function createServer({ db, favoritesDb, rootPath, webDistPath, indexMana
     reply.header("Content-Range", `bytes ${start}-${end}/${total}`);
     reply.header("Content-Length", end - start + 1);
     return reply.send(fs.createReadStream(absPath, { start, end }));
+  });
+
+  // ---- Route Parsing (航路解析) ----
+  
+  /** 检查导航数据库是否可用 */
+  app.get("/api/route/status", async () => {
+    return {
+      available: navDatabase !== null,
+      message: navDatabase ? "导航数据库已加载" : "导航数据库不可用（未找到 nd.db3）"
+    };
+  });
+
+  /** 解析航路 */
+  app.post("/api/route/parse", async (req, reply) => {
+    if (!navDatabase) {
+      return reply.code(503).send({
+        success: false,
+        error: "导航数据库不可用（未找到 nd.db3）",
+        points: []
+      });
+    }
+
+    const body = (req.body || {}) as { route?: string };
+    const routeString = typeof body.route === "string" ? body.route.trim() : "";
+
+    if (!routeString) {
+      return reply.code(400).send({
+        success: false,
+        error: "请提供航路字符串",
+        points: []
+      });
+    }
+
+    try {
+      const result = parseRoute(navDatabase, routeString);
+      return result;
+    } catch (err: any) {
+      return reply.code(500).send({
+        success: false,
+        error: err?.message || "解析失败",
+        points: []
+      });
+    }
+  });
+
+  /** 调试：查询航路段 */
+  app.get("/api/route/segment", async (req, reply) => {
+    if (!navDatabase) {
+      return reply.code(503).send({ error: "导航数据库不可用" });
+    }
+
+    const q = req.query as { airway?: string; from?: string; to?: string };
+    const airway = (q.airway || "").toUpperCase();
+    const from = (q.from || "").toUpperCase();
+    const to = (q.to || "").toUpperCase();
+
+    if (!airway || !from || !to) {
+      return reply.code(400).send({ error: "缺少参数：airway, from, to" });
+    }
+
+    const segment = navDatabase.getAirwaySegment(airway, from, to);
+    return { airway, from, to, segment, count: segment?.length ?? 0 };
   });
 
   if (webDistPath) {

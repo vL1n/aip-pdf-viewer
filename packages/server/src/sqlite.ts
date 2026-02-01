@@ -7,6 +7,7 @@ type Db = Database.Database;
 
 export type OpenDbOptions = {
   dbPath: string;
+  readonly?: boolean;
 };
 
 function isCorruptionError(err: unknown) {
@@ -35,10 +36,18 @@ function moveAsideCorruptDb(dbPath: string) {
   if (fs.existsSync(shm)) fs.renameSync(shm, `${bak}-shm`);
 }
 
-export function openDb({ dbPath }: OpenDbOptions): Db {
-  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+export function openDb({ dbPath, readonly = false }: OpenDbOptions): Db {
+  if (!readonly) {
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  }
   try {
-    const db = new Database(dbPath);
+    const db = new Database(dbPath, { readonly });
+
+    if (readonly) {
+      // 只读模式：仅设置最小 pragma
+      db.exec(`PRAGMA foreign_keys = ON;`);
+      return db;
+    }
 
     db.exec(`
       PRAGMA journal_mode = WAL;

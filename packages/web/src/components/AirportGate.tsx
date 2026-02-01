@@ -1,5 +1,6 @@
 import React from "react";
-import { Alert, Button, Segmented, Select, Space, Typography } from "antd";
+import { Alert, Button, Divider, Segmented, Select, Space, Typography } from "antd";
+import { CompassOutlined } from "@ant-design/icons";
 import type { AirportRow } from "../api";
 import type { ThemeMode } from "../hooks/useThemeMode";
 
@@ -26,6 +27,9 @@ export function AirportGate(props: {
   canConfirm: boolean;
   onConfirm: () => void;
   onClear: () => void;
+
+  /** 进入航路规划页面 */
+  onEnterRouteMap?: () => void;
 }) {
   const {
     airports,
@@ -43,7 +47,8 @@ export function AirportGate(props: {
     onDraftRouteToIcaoChange,
     canConfirm,
     onConfirm,
-    onClear
+    onClear,
+    onEnterRouteMap
   } = props;
 
   const options = airports.map((a) => ({
@@ -143,6 +148,28 @@ export function AirportGate(props: {
           确认进入
         </Button>
       </div>
+
+      {/* 航路规划入口 */}
+      {onEnterRouteMap && (
+        <>
+          <Divider style={{ margin: "16px 0 12px 0" }} />
+          <div style={{ textAlign: "center" }}>
+            <Button
+              type="default"
+              icon={<CompassOutlined />}
+              onClick={onEnterRouteMap}
+              size="large"
+            >
+              航路规划（地图可视化）
+            </Button>
+            <div style={{ marginTop: 8 }}>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                输入航路字符串，在地图上查看航点和航线
+              </Typography.Text>
+            </div>
+          </div>
+        </>
+      )}
     </Space>
   );
 }

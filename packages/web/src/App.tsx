@@ -28,6 +28,7 @@ import { AppHeader } from "./components/AppHeader";
 import { IndexStatusBar } from "./components/IndexStatusBar";
 import { SidebarPanel } from "./components/SidebarPanel";
 import { PdfViewerPanel } from "./components/PdfViewerPanel";
+import { RouteMapPage } from "./components/RouteMapPage";
 import { buildChartGroupTags, buildSidebarTreeData } from "./selectors/sidebar";
 import type { ThemeMode } from "./hooks/useThemeMode";
 
@@ -48,7 +49,10 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
   const [airportsLoading, setAirportsLoading] = useState(true);
   const [airportsError, setAirportsError] = useState<string | null>(null);
 
-  // 首屏“选择区域”支持：
+  // 航路规划页面状态
+  const [showRouteMap, setShowRouteMap] = useState(false);
+
+  // 首屏"选择区域"支持：
   // - 查看模式：仅允许选择 1 个机场
   // - 航线模式：允许选择 2 个机场（按选择顺序：起/降）
   const [selectModeDraft, setSelectModeDraft] = useState<"view" | "route">("view");
@@ -360,6 +364,11 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
     if (isMobile) setSiderCollapsed(true);
   };
 
+  // 航路规划页面
+  if (showRouteMap) {
+    return <RouteMapPage onBack={() => setShowRouteMap(false)} />;
+  }
+
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {/* 首次进入：先选择机场，再展示主界面 */}
@@ -411,6 +420,7 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
                   setDraftRouteFromIcao("");
                   setDraftRouteToIcao("");
                 }}
+                onEnterRouteMap={() => setShowRouteMap(true)}
               />
             </div>
           </div>

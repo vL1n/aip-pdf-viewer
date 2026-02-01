@@ -121,4 +121,47 @@ export async function apiFavoritesImport(payload: { mode?: "merge" | "replace"; 
   return await postJson<{ ok: true; mode: string; total: number }>("/api/favorites/import", payload);
 }
 
+// ---- Route Parsing (航路解析) ----
+
+/** 航路解析状态 */
+export interface RouteStatus {
+  available: boolean;
+  message: string;
+}
+
+/** 解析后的航点 */
+export interface ParsedRoutePoint {
+  ident: string;
+  name: string | null;
+  lat: number;
+  lon: number;
+  type: "airport" | "waypoint" | "navaid";
+  viaAirway: string | null;
+  isExplicit: boolean;
+  isAirport: boolean;
+  remark: string | null;
+}
+
+/** 航路解析结果 */
+export interface ParsedRoute {
+  success: boolean;
+  error: string | null;
+  departure: { ident: string; lat: number; lon: number } | null;
+  arrival: { ident: string; lat: number; lon: number } | null;
+  sid: string | null;
+  star: string | null;
+  points: ParsedRoutePoint[];
+  unknownElements: string[];
+}
+
+/** 获取航路解析功能状态 */
+export async function apiRouteStatus() {
+  return await getJson<RouteStatus>("/api/route/status");
+}
+
+/** 解析航路 */
+export async function apiRouteParse(route: string) {
+  return await postJson<ParsedRoute>("/api/route/parse", { route });
+}
+
 
