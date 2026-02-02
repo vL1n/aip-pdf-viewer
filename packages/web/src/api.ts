@@ -247,11 +247,49 @@ export interface FittedWaypoint {
   isAirport: boolean;
 }
 
+/** 航段匹配结果 */
+export interface SegmentMatch {
+  segmentIndex: number;
+  airway: string | null;
+  entryPoint: { ident: string; lat: number; lon: number } | null;
+  exitPoint: { ident: string; lat: number; lon: number } | null;
+  directionScore: number;
+  distanceScore: number;
+  totalScore: number;
+}
+
+/** 单个拟合候选结果 */
+export interface FitCandidate {
+  /** 拟合度分数 (0-100) */
+  score: number;
+  /** 拟合后的航点序列 */
+  waypoints: FittedWaypoint[];
+  /** 生成的航路字符串 */
+  routeString: string;
+  /** 各航段匹配详情 */
+  segments: SegmentMatch[];
+}
+
 /** 拟合选项 */
 export interface FitOptions {
+  /** 最大匹配距离（公里） */
   maxDistanceKm?: number;
+  /** 转折点检测阈值（度） */
+  turnAngleThreshold?: number;
+  /** 最小航段距离（公里） */
+  minSegmentDistanceKm?: number;
+  /** 候选结果数量 */
+  maxCandidates?: number;
+  /** 方向匹配权重 (0-100) */
+  directionWeight?: number;
+  /** 距离匹配权重 (0-100) */
+  distanceWeight?: number;
+  /** 航路加分 */
+  airwayBonus?: number;
+  /** 采样间隔（公里），0=不采样 */
   sampleIntervalKm?: number;
-  useAirways?: boolean;
+  /** 是否强制使用航路 */
+  preferAirways?: boolean;
 }
 
 /** 拟合结果 */
@@ -262,6 +300,8 @@ export interface FitRouteResult {
   routeString: string;
   sampledPointsCount: number;
   matchedWaypointsCount: number;
+  /** 多个候选结果（按分数降序） */
+  candidates: FitCandidate[];
 }
 
 /** 根据航迹拟合航路 */
@@ -271,5 +311,4 @@ export async function apiRouteFit(
 ) {
   return await postJson<FitRouteResult>("/api/route/fit", { points, options });
 }
-
 

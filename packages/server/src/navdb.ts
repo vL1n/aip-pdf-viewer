@@ -31,6 +31,7 @@ export interface AirwayLeg {
   isEnd: boolean;
 }
 
+
 /**
  * 导航数据库查询类
  */
@@ -437,4 +438,112 @@ export class NavDatabase {
 
     return null;
   }
+
+  /**
+   * 获取航路的所有航点（按顺序）
+   * @param airwayIdent 航路标识符
+   * @returns 航点数组，如果航路不存在则返回 null
+   */
+  getAirwayFullPoints(airwayIdent: string): NavPoint[] | null {
+    const airway = this.findAirway(airwayIdent);
+    if (!airway) return null;
+
+    const legs = this.getAirwayLegs(airway.id);
+    if (legs.length === 0) return null;
+
+    // 构建航路图（邻接表）和度数统计
+    const graph = new Map<number, Set<number>>();
+    const degree = new Map<number, number>();
+
+    for (const leg of legs) {
+      if (!graph.has(leg.waypoint1Id)) graph.set(leg.waypoint1Id, new Set());
+      if (!graph.has(leg.waypoint2Id)) graph.set(leg.waypoint2Id, new Set());
+
+      graph.get(leg.waypoint1Id)!.add(leg.waypoint2Id);
+      graph.get(leg.waypoint2Id)!.add(leg.waypoint1Id);
+
+      degree.set(leg.waypoint1Id, (degree.get(leg.waypoint1Id) || 0) + 1);
+      degree.set(leg.waypoint2Id, (degree.get(leg.waypoint2Id) || 0) + 1);
+    }
+
+    // 找到端点（度数为1的节点）
+    const endpoints: number[] = [];
+    for (const [id, deg] of degree) {
+      if (deg === 1) endpoints.push(id);
+    }
+
+    // 如果没有端点（环形航路），从任意点开始
+    const startId = endpoints.length > 0 ? endpoints[0] : legs[0].waypoint1Id;
+
+    // 从端点开始遍历整条航路
+    const result: NavPoint[] = [];
+    const visited = new Set<number>();
+    let current = startId;
+
+    while (current !== undefined) {
+      visited.add(current);
+      const wpt = this.getWaypointById(current);
+      if (wpt) result.push(wpt);
+
+      const neighbors = graph.get(current);
+      if (!neighbors) break;
+
+      let next: number | undefined;
+      for (const n of neighbors) {
+        if (!visited.has(n)) {
+          next = n;
+          break;
+        }
+      }
+      current = next!;
+    }
+
+    return result.length > 0 ? result : null;
+  }
+
+  /**
+   * 查找两条航路的交点（共同航点）
+   * @param airway1 航路1标识符
+   * @param airway2 航路2标识符
+   * @returns 交点航点数组（可能有多个交点）
+   */
+  findAirwayIntersection(airway1: string, airway2: string): NavPoint[] {
+    const aw1 = this.findAirway(airway1);
+    const aw2 = this.findAirway(airway2);
+
+    if (!aw1 || !aw2) return [];
+
+    // 查找两条航路共同的航点
+    const query = `
+      SELECT DISTINCT w.ID, w.Ident, w.Name, w.Latitude, w.Longtitude
+      FROM Waypoints w
+      WHERE w.ID IN (
+        SELECT Waypoint1ID FROM AirwayLegs WHERE AirwayID = ?
+        UNION
+        SELECT Waypoint2ID FROM AirwayLegs WHERE AirwayID = ?
+      )
+      AND w.ID IN (
+        SELECT Waypoint1ID FROM AirwayLegs WHERE AirwayID = ?
+        UNION
+        SELECT Waypoint2ID FROM AirwayLegs WHERE AirwayID = ?
+      )
+    `;
+
+    const rows = this.db.prepare(query).all(aw1.id, aw1.id, aw2.id, aw2.id) as Array<{
+      ID: number;
+      Ident: string;
+      Name: string;
+      Latitude: number;
+      Longtitude: number;
+    }>;
+
+    return rows.map(r => ({
+      ident: r.Ident,
+      name: r.Name,
+      lat: r.Latitude,
+      lon: r.Longtitude,
+      type: "waypoint" as const
+    }));
+  }
+
 }

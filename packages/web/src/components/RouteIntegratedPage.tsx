@@ -225,6 +225,7 @@ export function RouteIntegratedPage({
   // KML 导入状态
   const [kmlResult, setKmlResult] = useState<KmlParseResult | null>(null);
   const [fitResult, setFitResult] = useState<FitRouteResult | null>(null);
+  const [selectedCandidateIndex, setSelectedCandidateIndex] = useState(0);
 
   // VATSIM 追踪状态
   const [vatsimPilot, setVatsimPilot] = useState<VatsimPilot | null>(null);
@@ -397,16 +398,19 @@ export function RouteIntegratedPage({
 
   const handleRouteFitted = useCallback((result: FitRouteResult) => {
     setFitResult(result);
+    setSelectedCandidateIndex(0);
     setFitBoundsTrigger((v) => v + 1);
   }, []);
 
   const handleKmlClear = useCallback(() => {
     setKmlResult(null);
     setFitResult(null);
+    setSelectedCandidateIndex(0);
   }, []);
 
   const handleFitClear = useCallback(() => {
     setFitResult(null);
+    setSelectedCandidateIndex(0);
   }, []);
 
   // 处理 VATSIM 导入航路
@@ -419,6 +423,23 @@ export function RouteIntegratedPage({
     setVatsimCenterTrigger((v) => v + 1);
   }, []);
 
+  // 获取当前选中的候选结果
+  const selectedCandidate = useMemo(() => {
+    if (!fitResult?.candidates || fitResult.candidates.length === 0) {
+      // 向后兼容：如果没有 candidates 但有 waypoints，使用 waypoints
+      if (fitResult?.waypoints && fitResult.waypoints.length > 0) {
+        return {
+          score: 0,
+          waypoints: fitResult.waypoints,
+          routeString: fitResult.routeString,
+          segments: []
+        };
+      }
+      return null;
+    }
+    return fitResult.candidates[selectedCandidateIndex] || fitResult.candidates[0];
+  }, [fitResult, selectedCandidateIndex]);
+
   // 收集所有地图数据点
   const getAllMapPoints = useCallback((): Array<{ lat: number; lon: number }> => {
     const points: Array<{ lat: number; lon: number }> = [];
@@ -428,11 +449,11 @@ export function RouteIntegratedPage({
     if (kmlResult) {
       points.push(...kmlResult.points.map((p) => ({ lat: p.lat, lon: p.lon })));
     }
-    if (fitResult) {
-      points.push(...fitResult.waypoints.map((wp) => ({ lat: wp.lat, lon: wp.lon })));
+    if (selectedCandidate) {
+      points.push(...selectedCandidate.waypoints.map((wp) => ({ lat: wp.lat, lon: wp.lon })));
     }
     return points;
-  }, [parseResult, kmlResult, fitResult]);
+  }, [parseResult, kmlResult, selectedCandidate]);
 
   // PDF 链接
   const pdfHref = openedFileId ? pdfUrl(openedFileId) : null;
@@ -450,7 +471,7 @@ export function RouteIntegratedPage({
 
   // 渲染总览 Tab 内容
   const renderOverviewTab = () => (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, height: "100%", overflowY: "auto" }}>
       <RouteParsePanel
         parseResult={parseResult}
         onParseSuccess={handleParseSuccess}
@@ -466,6 +487,8 @@ export function RouteIntegratedPage({
         fitResult={fitResult}
         onRouteFitted={handleRouteFitted}
         onClear={handleFitClear}
+        selectedCandidateIndex={selectedCandidateIndex}
+        onCandidateIndexChange={setSelectedCandidateIndex}
       />
     </div>
   );
@@ -642,18 +665,18 @@ export function RouteIntegratedPage({
       {kmlResult && kmlResult.points.length > 0 && (
         <Polyline
           positions={kmlResult.points.map((p) => [p.lat, p.lon])}
-          pathOptions={{ color: "#e67e22", weight: 2, opacity: 0.7, dashArray: "8, 6" }}
+          pathOptions={{ color: "#8e44ad", weight: 2, opacity: 0.8, dashArray: "8, 6" }}
         />
       )}
 
-      {/* 拟合航路 */}
-      {fitResult && fitResult.waypoints.length > 0 && (
+      {/* 拟合航路（使用选中的候选结果） */}
+      {selectedCandidate && selectedCandidate.waypoints.length > 0 && (
         <>
           <Polyline
-            positions={fitResult.waypoints.map((wp) => [wp.lat, wp.lon])}
-            pathOptions={{ color: "#27ae60", weight: 3, opacity: 0.8 }}
+            positions={selectedCandidate.waypoints.map((wp) => [wp.lat, wp.lon])}
+            pathOptions={{ color: "#16a085", weight: 3, opacity: 0.8 }}
           />
-          {fitResult.waypoints.map((wp, idx) => (
+          {selectedCandidate.waypoints.map((wp, idx) => (
             <Marker key={`fit-${wp.ident}-${idx}`} position={[wp.lat, wp.lon]} icon={getFittedMarkerIcon(wp)}>
               <Tooltip permanent={wp.isAirport} direction="top" offset={[0, -10]}>
                 <strong>{wp.ident}</strong>
@@ -870,8 +893,8 @@ export function RouteIntegratedPage({
                         <Space><div style={{ width: 14, height: 14, background: "#3498db", borderRadius: "50%" }} /><span>中间航点</span></Space>
                         <Space><div style={{ width: 14, height: 14, background: "#9b59b6", borderRadius: "50%" }} /><span>VOR/NDB</span></Space>
                         <Space><div style={{ width: 30, height: 3, background: "#3498db" }} /><span>解析航路</span></Space>
-                        <Space><div style={{ width: 30, height: 2, background: "#e67e22", borderTop: "2px dashed #e67e22" }} /><span>KML 航迹</span></Space>
-                        <Space><div style={{ width: 30, height: 3, background: "#27ae60" }} /><span>拟合航路</span></Space>
+                        <Space><div style={{ width: 30, height: 2, background: "#8e44ad", borderTop: "2px dashed #8e44ad" }} /><span>KML 航迹</span></Space>
+                        <Space><div style={{ width: 30, height: 3, background: "#16a085" }} /><span>拟合航路</span></Space>
                       </Space>
                     </div>
                   ) : (
