@@ -481,39 +481,19 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
             </Layout.Sider>
           )}
 
-          <Layout.Content style={{ padding: 12, paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))", overflow: "hidden", minHeight: 0 }}>
-            <Layout style={{ height: "100%", background: token.colorBgLayout, minHeight: 0 }}>
-              <Layout.Content
-                style={{
-                  height: "100%",
-                  minHeight: 0,
-                  background: token.colorBgContainer,
-                  border: `1px solid ${token.colorBorderSecondary}`,
-                  borderRadius: token.borderRadiusLG,
-                  overflow: "hidden"
-                }}
-              >
-                <div
-                  style={{
-                    height: "100%",
-                    minHeight: 0,
-                    overflow: "hidden",
-                    padding: 0
-                  }}
-                >
-                  <PdfViewerPanel
-                    openedFileId={openedFileId}
-                    pdfHref={pdfHref}
-                    workerUrl={pdfWorkerUrl}
-                    plugins={[pdfLayoutPlugin]}
-                    isDark={isDark}
-                    borderRadius={token.borderRadiusLG}
-                    backgroundLayout={token.colorBgLayout}
-                    backgroundContainer={token.colorBgContainer}
-                  />
-                </div>
-              </Layout.Content>
-            </Layout>
+          <Layout.Content style={{ padding: 0, paddingBottom: "env(safe-area-inset-bottom, 0px)", overflow: "hidden", minHeight: 0 }}>
+            <div style={{ height: "100%", minHeight: 0, overflow: "hidden" }}>
+              <PdfViewerPanel
+                openedFileId={openedFileId}
+                pdfHref={pdfHref}
+                workerUrl={pdfWorkerUrl}
+                plugins={[pdfLayoutPlugin]}
+                isDark={isDark}
+                borderRadius={token.borderRadiusLG}
+                backgroundLayout={token.colorBgLayout}
+                backgroundContainer={token.colorBgContainer}
+              />
+            </div>
           </Layout.Content>
 
           {isMobile ? (

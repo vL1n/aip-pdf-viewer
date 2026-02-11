@@ -100,4 +100,17 @@ body {
   min-height: 0;
 }
 
+/* PDF 区域占满右侧：去掉 default-layout 的圆角与内边距 */
+.rpv-default-layout__container,
+.rpv-default-layout__main,
+.rpv-default-layout__body {
+  border-radius: 0;
+  padding: 0;
+}
+
+/* 工具栏为 position:absolute 在上方，body 需留出顶部空间避免遮挡 PDF 内容 */
+.rpv-default-layout__body {
+  padding-top: 2.5rem;
+}
+
 
