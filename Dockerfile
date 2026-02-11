@@ -4,7 +4,7 @@
 ## - 运行阶段：仅安装 server 的生产依赖，并用 server 的 --serve-web 托管 web/dist
 ##
 
-ARG NODE_IMAGE=node:20-bookworm-slim
+ARG NODE_IMAGE=node:20-alpine
 ARG PNPM_VERSION=9.15.4
 # npm/pnpm registry（用于 pnpm install 以及 corepack 下载 pnpm 本体）
 ARG NPM_REGISTRY=https://registry.npmmirror.com

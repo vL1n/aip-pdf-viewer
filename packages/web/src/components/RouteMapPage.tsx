@@ -10,6 +10,7 @@
  *   - 右侧 60%：地图
  */
 import React, { useState, useEffect, useCallback } from "react";
+import { useWindowHeight } from "../hooks/useWindowHeight";
 import {
   Button,
   Alert,
@@ -180,6 +181,7 @@ export interface RouteMapPageProps {
 type TabKey = "route" | "fit";
 
 export function RouteMapPage({ onBack }: RouteMapPageProps) {
+  const windowHeight = useWindowHeight();
   const { token } = theme.useToken();
 
   // 导航数据库状态
@@ -315,7 +317,7 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
   return (
     <div
       style={{
-        height: "100vh",
+        height: windowHeight,
         display: "flex",
         flexDirection: "column",
         background: token.colorBgLayout

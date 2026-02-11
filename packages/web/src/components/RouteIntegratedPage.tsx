@@ -8,6 +8,7 @@
  * - 右侧预览：默认显示地图，选中航图时显示 PDF
  */
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useWindowHeight } from "../hooks/useWindowHeight";
 import {
   Button,
   Alert,
@@ -199,6 +200,7 @@ export function RouteIntegratedPage({
   initialDepartureIcao,
   initialArrivalIcao
 }: RouteIntegratedPageProps) {
+  const windowHeight = useWindowHeight();
   const { token } = theme.useToken();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
@@ -732,7 +734,7 @@ export function RouteIntegratedPage({
   );
 
   return (
-    <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: token.colorBgLayout }}>
+    <div style={{ height: windowHeight, display: "flex", flexDirection: "column", background: token.colorBgLayout }}>
       {/* 顶栏：工具区 */}
       <div
         style={{

@@ -1,5 +1,6 @@
 /* @refresh reset */
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useWindowHeight } from "./hooks/useWindowHeight";
 
 import {
   apiAirports,
@@ -73,6 +74,7 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
   const [favoritesLoading, setFavoritesLoading] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
+  const windowHeight = useWindowHeight();
   const { token } = theme.useToken();
   // 注意：defaultLayoutPlugin 内部会用到 React Hooks，因此不能放在 useMemo 回调里；
   // 必须在组件顶层直接调用（满足 rules-of-hooks）。
@@ -344,7 +346,7 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
   }
 
   return (
-    <div style={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div style={{ height: windowHeight, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {/* 首次进入：先选择机场，再展示主界面 */}
         {ready && selectedIcaos.length === 0 ? (
           <div
