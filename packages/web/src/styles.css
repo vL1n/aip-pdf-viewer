@@ -113,4 +113,18 @@ body {
   padding-top: 2.5rem;
 }
 
+.pdfAnnotationToolbar {
+  flex: 0 0 auto;
+}
+
+.pdfAnnotationColor {
+  appearance: none;
+  padding: 0;
+}
+
+.pdfAnnotationLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+}
 

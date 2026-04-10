@@ -188,4 +188,21 @@ export function initFavoritesSchema(db: Db) {
   `);
 }
 
+export function initAnnotationsSchema(db: Db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS annotations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      rel_path TEXT NOT NULL,
+      page_index INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      color TEXT NOT NULL,
+      opacity REAL NOT NULL,
+      stroke_width REAL NOT NULL,
+      points_json TEXT NOT NULL,
+      created_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_annotations_rel_path_page ON annotations(rel_path, page_index, created_at_ms);
+  `);
+}
 

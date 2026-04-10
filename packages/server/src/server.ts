@@ -8,7 +8,7 @@ import type Database from "better-sqlite3";
 
 import { buildTree } from "./tree.js";
 import type { IndexManager } from "./indexManager.js";
-import { initFavoritesSchema } from "./sqlite.js";
+import { initAnnotationsSchema, initFavoritesSchema } from "./sqlite.js";
 import { NavDatabase } from "./navdb.js";
 import { parseRoute } from "./routeParser.js";
 import { parseKml } from "./kmlParser.js";
@@ -56,6 +56,7 @@ export function createServer({ db, favoritesDb, navDb, rootPath, webDistPath, in
 
   // 确保收藏表存在（独立 SQLite；不依赖索引构建是否完成）
   initFavoritesSchema(favoritesDb);
+  initAnnotationsSchema(favoritesDb);
 
   // 导航数据库封装（可选）
   const navDatabase = navDb ? new NavDatabase(navDb) : null;
@@ -97,6 +98,49 @@ export function createServer({ db, favoritesDb, navDb, rootPath, webDistPath, in
     if (indexManager.isReady()) return true;
     reply.code(409).send({ error: "index_not_ready", status: indexManager.getStatus() });
     return false;
+  }
+
+  function resolveFileRef(input: { fileId?: unknown; relPath?: unknown }) {
+    const fileId = input.fileId != null ? Number(input.fileId) : null;
+    const relPath = typeof input.relPath === "string" ? input.relPath.trim() : null;
+
+    const fileRow =
+      fileId != null && !Number.isNaN(fileId)
+        ? (db.prepare(`SELECT rel_path, icao FROM files WHERE id = ?`).get(fileId) as any)
+        : relPath
+          ? (db.prepare(`SELECT rel_path, icao FROM files WHERE rel_path = ?`).get(relPath) as any)
+          : null;
+
+    if (!fileRow?.rel_path) return null;
+    return {
+      relPath: String(fileRow.rel_path),
+      icao: fileRow.icao != null ? String(fileRow.icao) : null
+    };
+  }
+
+  function normalizeAnnotationPoints(input: unknown) {
+    if (!Array.isArray(input)) return null;
+    const points = input
+      .map((item) => {
+        const x = Number((item as any)?.x);
+        const y = Number((item as any)?.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+        return {
+          x: Math.max(0, Math.min(1, x)),
+          y: Math.max(0, Math.min(1, y))
+        };
+      })
+      .filter(Boolean) as Array<{ x: number; y: number }>;
+
+    return points.length >= 2 ? points : null;
+  }
+
+  function parseAnnotationPoints(pointsJson: string) {
+    try {
+      return normalizeAnnotationPoints(JSON.parse(pointsJson)) ?? [];
+    } catch {
+      return [];
+    }
   }
 
   app.get("/api/airports", async () => {
@@ -246,6 +290,153 @@ export function createServer({ db, favoritesDb, navDb, rootPath, webDistPath, in
 
     const totalRow = favoritesDb.prepare(`SELECT COUNT(1) AS c FROM favorites`).get() as any;
     return { ok: true, mode, total: totalRow?.c ?? 0 };
+  });
+
+  // ---- Annotations ----
+  app.get("/api/annotations", async (req, reply) => {
+    if (!requireReady(reply)) return;
+    const q = req.query as { fileId?: string; relPath?: string };
+    const fileRef = resolveFileRef({ fileId: q.fileId, relPath: q.relPath });
+    if (!fileRef) return reply.code(400).send({ error: "invalid_file" });
+
+    const rows = favoritesDb
+      .prepare(
+        `
+          SELECT id, page_index, kind, color, opacity, stroke_width, points_json, created_at_ms, updated_at_ms
+          FROM annotations
+          WHERE rel_path = ?
+          ORDER BY page_index, created_at_ms, id
+        `
+      )
+      .all(fileRef.relPath) as Array<{
+        id: number;
+        page_index: number;
+        kind: string;
+        color: string;
+        opacity: number;
+        stroke_width: number;
+        points_json: string;
+        created_at_ms: number;
+        updated_at_ms: number;
+      }>;
+
+    return {
+      relPath: fileRef.relPath,
+      annotations: rows
+        .map((row) => ({
+          id: row.id,
+          relPath: fileRef.relPath,
+          pageIndex: row.page_index,
+          kind: row.kind,
+          color: row.color,
+          opacity: row.opacity,
+          strokeWidth: row.stroke_width,
+          points: parseAnnotationPoints(row.points_json),
+          createdAtMs: row.created_at_ms,
+          updatedAtMs: row.updated_at_ms
+        }))
+        .filter((row) => row.points.length >= 2)
+    };
+  });
+
+  app.post("/api/annotations/add", async (req, reply) => {
+    if (!requireReady(reply)) return;
+    const body = (req.body || {}) as any;
+    const fileRef = resolveFileRef({ fileId: body.fileId, relPath: body.relPath });
+    if (!fileRef) return reply.code(400).send({ error: "invalid_file" });
+
+    const pageIndex = Number(body.pageIndex);
+    if (!Number.isInteger(pageIndex) || pageIndex < 0) {
+      return reply.code(400).send({ error: "invalid_page_index" });
+    }
+
+    const kind = body.kind === "highlighter" ? "highlighter" : body.kind === "pen" ? "pen" : null;
+    if (!kind) {
+      return reply.code(400).send({ error: "invalid_kind" });
+    }
+
+    const color = typeof body.color === "string" ? body.color.trim().slice(0, 32) : "";
+    if (!color) {
+      return reply.code(400).send({ error: "invalid_color" });
+    }
+
+    const opacity = Number(body.opacity);
+    if (!Number.isFinite(opacity) || opacity <= 0 || opacity > 1) {
+      return reply.code(400).send({ error: "invalid_opacity" });
+    }
+
+    const strokeWidth = Number(body.strokeWidth);
+    if (!Number.isFinite(strokeWidth) || strokeWidth <= 0 || strokeWidth > 0.1) {
+      return reply.code(400).send({ error: "invalid_stroke_width" });
+    }
+
+    const points = normalizeAnnotationPoints(body.points);
+    if (!points) {
+      return reply.code(400).send({ error: "invalid_points" });
+    }
+
+    const now = Date.now();
+    const result = favoritesDb
+      .prepare(
+        `
+          INSERT INTO annotations(
+            rel_path, page_index, kind, color, opacity, stroke_width, points_json, created_at_ms, updated_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(fileRef.relPath, pageIndex, kind, color, opacity, strokeWidth, JSON.stringify(points), now, now);
+
+    return {
+      ok: true,
+      annotation: {
+        id: Number(result.lastInsertRowid),
+        relPath: fileRef.relPath,
+        pageIndex,
+        kind,
+        color,
+        opacity,
+        strokeWidth,
+        points,
+        createdAtMs: now,
+        updatedAtMs: now
+      }
+    };
+  });
+
+  app.post("/api/annotations/delete", async (req, reply) => {
+    if (!requireReady(reply)) return;
+    const body = (req.body || {}) as any;
+    const id = Number(body.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return reply.code(400).send({ error: "invalid_id" });
+    }
+
+    favoritesDb.prepare(`DELETE FROM annotations WHERE id = ?`).run(id);
+    return { ok: true, id };
+  });
+
+  app.post("/api/annotations/clear", async (req, reply) => {
+    if (!requireReady(reply)) return;
+    const body = (req.body || {}) as any;
+    const fileRef = resolveFileRef({ fileId: body.fileId, relPath: body.relPath });
+    if (!fileRef) return reply.code(400).send({ error: "invalid_file" });
+
+    const pageIndex =
+      body.pageIndex == null || body.pageIndex === ""
+        ? null
+        : Number.isInteger(Number(body.pageIndex))
+          ? Number(body.pageIndex)
+          : NaN;
+    if (pageIndex != null && (!Number.isInteger(pageIndex) || pageIndex < 0)) {
+      return reply.code(400).send({ error: "invalid_page_index" });
+    }
+
+    const result =
+      pageIndex == null
+        ? favoritesDb.prepare(`DELETE FROM annotations WHERE rel_path = ?`).run(fileRef.relPath)
+        : favoritesDb.prepare(`DELETE FROM annotations WHERE rel_path = ? AND page_index = ?`).run(fileRef.relPath, pageIndex);
+
+    return { ok: true, cleared: result.changes };
   });
 
   app.get("/api/search", async (req, reply) => {
@@ -579,5 +770,4 @@ export function createServer({ db, favoritesDb, navDb, rootPath, webDistPath, in
 
   return app;
 }
-
 

@@ -76,10 +76,22 @@ async function startBackend(rootPath: string) {
   const db: Db = openDb({ dbPath: indexDbPath });
   const favoritesDb: Db = openDb({ dbPath: favoritesDbPath });
   const indexManager: IndexManager = new IndexManager(db);
+  const navDbPath = process.env.AIP_NAV_DB || process.env.EAIP_NAV_DB || path.join(rootPath, "nd.db3");
+
+  let navDb: Db | null = null;
+  if (fs.existsSync(navDbPath)) {
+    navDb = openDb({ dbPath: navDbPath, readonly: true });
+    // eslint-disable-next-line no-console
+    console.log(`已加载导航数据库: ${navDbPath}`);
+  } else {
+    // eslint-disable-next-line no-console
+    console.warn(`未找到导航数据库: ${navDbPath}（航路解析功能不可用）`);
+  }
 
   const fastifyApp = createServer({
     db,
     favoritesDb,
+    navDb,
     rootPath,
     webDistPath: webDir,
     indexManager
@@ -158,5 +170,4 @@ main().catch((e) => {
   console.error(e);
   app.quit();
 });
-
 

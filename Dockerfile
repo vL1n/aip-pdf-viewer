@@ -13,7 +13,8 @@ FROM ${NODE_IMAGE} AS build
 WORKDIR /repo
 
 # 启用 pnpm：显式 prepare，且允许通过 NPM_REGISTRY 覆盖 corepack 下载源
-ENV COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
+ARG NPM_REGISTRY
+ENV COREPACK_NPM_REGISTRY=${NPM_REGISTRY}
 RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 
 # 先复制依赖元信息以最大化缓存命中
@@ -22,7 +23,7 @@ COPY packages/server/package.json packages/server/package.json
 COPY packages/web/package.json packages/web/package.json
 COPY packages/launcher/package.json packages/launcher/package.json
 
-RUN pnpm config set registry https://registry.npmmirror.com && pnpm install --frozen-lockfile
+RUN pnpm config set registry ${NPM_REGISTRY} && pnpm install --frozen-lockfile
 
 # 再复制源码并构建
 COPY . .
@@ -36,14 +37,15 @@ FROM ${NODE_IMAGE} AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 
-ENV COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
+ARG NPM_REGISTRY
+ENV COREPACK_NPM_REGISTRY=${NPM_REGISTRY}
 RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 
 # 安装 server 的生产依赖（只需要 workspace 元信息与 lockfile）
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/server/package.json packages/server/package.json
 
-RUN pnpm config set registry https://registry.npmmirror.com && pnpm install --frozen-lockfile --prod --filter @aip/server...
+RUN pnpm config set registry ${NPM_REGISTRY} && pnpm install --frozen-lockfile --prod --filter @aip/server...
 
 # 拷贝构建产物
 COPY --from=build /repo/packages/server/dist /app/packages/server/dist

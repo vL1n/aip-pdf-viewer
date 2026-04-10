@@ -94,6 +94,51 @@ export function pdfUrl(id: number) {
   return `/api/pdf/${id}`;
 }
 
+export type PdfAnnotationKind = "pen" | "highlighter";
+
+export type PdfAnnotationPoint = {
+  x: number;
+  y: number;
+};
+
+export type PdfAnnotation = {
+  id: number;
+  relPath: string;
+  pageIndex: number;
+  kind: PdfAnnotationKind;
+  color: string;
+  opacity: number;
+  strokeWidth: number;
+  points: PdfAnnotationPoint[];
+  createdAtMs: number;
+  updatedAtMs: number;
+};
+
+export async function apiAnnotations(fileId: number) {
+  const qs = new URLSearchParams({ fileId: String(fileId) });
+  return await getJson<{ relPath: string; annotations: PdfAnnotation[] }>(`/api/annotations?${qs.toString()}`);
+}
+
+export async function apiAddAnnotation(input: {
+  fileId: number;
+  pageIndex: number;
+  kind: PdfAnnotationKind;
+  color: string;
+  opacity: number;
+  strokeWidth: number;
+  points: PdfAnnotationPoint[];
+}) {
+  return await postJson<{ ok: true; annotation: PdfAnnotation }>("/api/annotations/add", input);
+}
+
+export async function apiDeleteAnnotation(id: number) {
+  return await postJson<{ ok: true; id: number }>("/api/annotations/delete", { id });
+}
+
+export async function apiClearAnnotations(input: { fileId: number; pageIndex?: number }) {
+  return await postJson<{ ok: true; cleared: number }>("/api/annotations/clear", input);
+}
+
 export type FavoritesExportV1 = {
   version: 1;
   exportedAtMs: number;
@@ -311,4 +356,3 @@ export async function apiRouteFit(
 ) {
   return await postJson<FitRouteResult>("/api/route/fit", { points, options });
 }
-
