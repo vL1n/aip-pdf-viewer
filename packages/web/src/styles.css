@@ -115,6 +115,17 @@ body {
 
 .pdfAnnotationToolbar {
   flex: 0 0 auto;
+  position: relative;
+  box-sizing: border-box;
+}
+
+.pdfAnnotationToolbarRail {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 100%;
+  width: 100%;
+  min-width: 0;
 }
 
 .pdfAnnotationColor {
@@ -122,9 +133,60 @@ body {
   padding: 0;
 }
 
+.pdfAnnotationToggleButton {
+  flex: 0 0 auto;
+}
+
+.pdfAnnotationNativeBar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 46px;
+  padding: 0 12px;
+  border-radius: 999px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  scrollbar-width: none;
+}
+
+.pdfAnnotationNativeBar::-webkit-scrollbar {
+  display: none;
+}
+
+.pdfAnnotationToolCluster,
+.pdfAnnotationColorCluster,
+.pdfAnnotationActionCluster {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.pdfAnnotationDivider {
+  width: 1px;
+  height: 22px;
+  background: rgba(120, 120, 120, 0.25);
+  flex: 0 0 auto;
+}
+
+.pdfAnnotationStatusText {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(0, 0, 0, 0.62);
+}
+
+[data-theme="dark"] .pdfAnnotationStatusText {
+  color: rgba(255, 255, 255, 0.7);
+}
+
 .pdfAnnotationLayer {
   position: absolute;
   inset: 0;
   z-index: 6;
 }
-

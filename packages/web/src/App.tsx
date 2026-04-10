@@ -22,13 +22,12 @@ import {
   message,
   theme
 } from "antd";
-import { defaultLayoutPlugin } from "@react-pdf-viewer/default-layout";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { AirportGate } from "./components/AirportGate";
 import { AppHeader } from "./components/AppHeader";
 import { IndexStatusBar } from "./components/IndexStatusBar";
 import { SidebarPanel } from "./components/SidebarPanel";
-import { PdfViewerPanel } from "./components/PdfViewerPanel";
+import { PEN_COLORS, PdfViewerPanel, type PdfAnnotationMeta, type PdfAnnotationUiState } from "./components/PdfViewerPanel";
 import { RouteIntegratedPage } from "./components/RouteIntegratedPage";
 import { buildChartGroupTags, buildSidebarTreeData } from "./selectors/sidebar";
 import type { ThemeMode } from "./hooks/useThemeMode";
@@ -68,6 +67,19 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
   const [treeError, setTreeError] = useState<string | null>(null);
 
   const [openedFileId, setOpenedFileId] = useState<number | null>(null);
+  const [annotationUi, setAnnotationUi] = useState<PdfAnnotationUiState>({
+    toolsOpen: false,
+    mode: "browse",
+    penColor: PEN_COLORS[0]
+  });
+  const [annotationMeta, setAnnotationMeta] = useState<PdfAnnotationMeta>({
+    hasPdf: false,
+    currentPageIndex: 0,
+    currentPageAnnotations: 0,
+    totalAnnotations: 0
+  });
+  const [clearPageRequestKey, setClearPageRequestKey] = useState(0);
+  const [clearDocumentRequestKey, setClearDocumentRequestKey] = useState(0);
   const [chartGroupFilter, setChartGroupFilter] = useState<string>("全部");
   const [viewMode, setViewMode] = useState<"全部" | "收藏">("全部");
   const [favoriteRelPaths, setFavoriteRelPaths] = useState<Set<string>>(new Set());
@@ -76,12 +88,22 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
 
   const windowHeight = useWindowHeight();
   const { token } = theme.useToken();
-  // 注意：defaultLayoutPlugin 内部会用到 React Hooks，因此不能放在 useMemo 回调里；
-  // 必须在组件顶层直接调用（满足 rules-of-hooks）。
-  const pdfLayoutPlugin = defaultLayoutPlugin({
-    // 默认隐藏左侧栏（缩略图/书签/目录树等）
-    sidebarTabs: () => []
-  });
+  const pdfHref = openedFileId ? pdfUrl(openedFileId) : null;
+
+  useEffect(() => {
+    if (openedFileId && pdfHref) return;
+    setAnnotationUi((prev) => ({
+      ...prev,
+      toolsOpen: false,
+      mode: "browse"
+    }));
+    setAnnotationMeta({
+      hasPdf: false,
+      currentPageIndex: 0,
+      currentPageAnnotations: 0,
+      totalAnnotations: 0
+    });
+  }, [openedFileId, pdfHref]);
 
   useEffect(() => {
     // 1) 优先拿到索引状态（用于启动进度条）
@@ -327,7 +349,6 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
     setActiveIcao("");
   };
 
-  const pdfHref = openedFileId ? pdfUrl(openedFileId) : null;
   const openFileFromSidebar = (id: number) => {
     setOpenedFileId(id);
     if (isMobile) setSiderCollapsed(true);
@@ -419,6 +440,12 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
             borderColor={token.colorBorderSecondary}
             themeMode={themeMode}
             onThemeModeChange={onThemeModeChange}
+            annotationEnabled={Boolean(openedFileId && pdfHref)}
+            annotationUi={annotationUi}
+            annotationMeta={annotationMeta}
+            onAnnotationUiChange={setAnnotationUi}
+            onClearCurrentPageAnnotations={() => setClearPageRequestKey((v) => v + 1)}
+            onClearAllAnnotations={() => setClearDocumentRequestKey((v) => v + 1)}
           />
         ) : null}
 
@@ -487,11 +514,16 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
                 openedFileId={openedFileId}
                 pdfHref={pdfHref}
                 workerUrl={pdfWorkerUrl}
-                plugins={[pdfLayoutPlugin]}
                 isDark={isDark}
                 borderRadius={token.borderRadiusLG}
                 backgroundLayout={token.colorBgLayout}
                 backgroundContainer={token.colorBgContainer}
+                annotationControlsPlacement="external"
+                annotationUi={annotationUi}
+                onAnnotationUiChange={setAnnotationUi}
+                onAnnotationMetaChange={setAnnotationMeta}
+                clearPageRequestKey={clearPageRequestKey}
+                clearDocumentRequestKey={clearDocumentRequestKey}
               />
             </div>
           </Layout.Content>

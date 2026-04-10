@@ -66,7 +66,6 @@ import { KmlUploadBar } from "./KmlUploadBar";
 import { PdfViewerPanel } from "./PdfViewerPanel";
 import { buildChartGroupTags, buildSidebarTreeData, type ChartGroupTag } from "../selectors/sidebar";
 
-import { defaultLayoutPlugin } from "@react-pdf-viewer/default-layout";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 // 修复 Leaflet 默认图标问题
@@ -204,11 +203,6 @@ export function RouteIntegratedPage({
   const { token } = theme.useToken();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
-
-  // PDF 插件
-  const pdfLayoutPlugin = defaultLayoutPlugin({
-    sidebarTabs: () => []
-  });
 
   // 侧边栏状态
   const [siderCollapsed, setSiderCollapsed] = useState(false);
@@ -935,7 +929,6 @@ export function RouteIntegratedPage({
                     openedFileId={openedFileId}
                     pdfHref={pdfHref}
                     workerUrl={pdfWorkerUrl}
-                    plugins={[pdfLayoutPlugin]}
                     isDark={isDark}
                     borderRadius={token.borderRadiusLG}
                     backgroundLayout={token.colorBgLayout}

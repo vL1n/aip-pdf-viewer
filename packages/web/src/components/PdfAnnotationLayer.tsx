@@ -42,6 +42,17 @@ function getStrokeStyle(kind: PdfAnnotationKind, color: string) {
   };
 }
 
+function buildStrokeKey(stroke: DraftStroke) {
+  return JSON.stringify({
+    kind: stroke.kind,
+    pointerId: stroke.pointerId,
+    points: stroke.points.map((point) => ({
+      x: Number(point.x.toFixed(4)),
+      y: Number(point.y.toFixed(4))
+    }))
+  });
+}
+
 export function PdfAnnotationLayer(props: {
   pageIndex: number;
   width: number;
@@ -64,6 +75,9 @@ export function PdfAnnotationLayer(props: {
   const layerRef = useRef<HTMLDivElement>(null);
   const activePointerIdsRef = useRef<Set<number>>(new Set());
   const [draftStroke, setDraftStroke] = useState<DraftStroke | null>(null);
+  const draftStrokeRef = useRef<DraftStroke | null>(draftStroke);
+  draftStrokeRef.current = draftStroke;
+  const submittedStrokeKeysRef = useRef<Set<string>>(new Set());
 
   const activeKind = mode === "pen" || mode === "highlighter" ? mode : null;
   const activeStroke = activeKind ? getStrokeStyle(activeKind, activeKind === "highlighter" ? "#fadb14" : penColor) : null;
@@ -84,21 +98,19 @@ export function PdfAnnotationLayer(props: {
   }, []);
 
   const finishStroke = useCallback(
-    async (pointerId: number) => {
-      setDraftStroke((current) => {
-        if (!current || current.pointerId !== pointerId) return current;
-        if (current.points.length >= 2) {
-          const style = getStrokeStyle(current.kind, current.kind === "highlighter" ? "#fadb14" : penColor);
-          void onCreateAnnotation({
-            pageIndex,
-            kind: current.kind,
-            color: style.color,
-            opacity: style.opacity,
-            strokeWidth: style.strokeWidth,
-            points: current.points
-          });
-        }
-        return null;
+    (stroke: DraftStroke | null) => {
+      if (!stroke || stroke.points.length < 2) return;
+      const strokeKey = buildStrokeKey(stroke);
+      if (submittedStrokeKeysRef.current.has(strokeKey)) return;
+      submittedStrokeKeysRef.current.add(strokeKey);
+      const style = getStrokeStyle(stroke.kind, stroke.kind === "highlighter" ? "#fadb14" : penColor);
+      void onCreateAnnotation({
+        pageIndex,
+        kind: stroke.kind,
+        color: style.color,
+        opacity: style.opacity,
+        strokeWidth: style.strokeWidth,
+        points: stroke.points
       });
     },
     [onCreateAnnotation, pageIndex, penColor]
@@ -110,6 +122,7 @@ export function PdfAnnotationLayer(props: {
       if (event.pointerType === "mouse" && event.button !== 0) return;
       activePointerIdsRef.current.add(event.pointerId);
       if (activePointerIdsRef.current.size !== 1) {
+        draftStrokeRef.current = null;
         setDraftStroke(null);
         return;
       }
@@ -117,58 +130,65 @@ export function PdfAnnotationLayer(props: {
       if (!point) return;
       event.preventDefault();
       event.currentTarget.setPointerCapture(event.pointerId);
-      setDraftStroke({
+      const nextStroke = {
         kind: activeKind,
         points: [point],
         pointerId: event.pointerId
-      });
+      };
+      submittedStrokeKeysRef.current.clear();
+      draftStrokeRef.current = nextStroke;
+      setDraftStroke(nextStroke);
     },
     [activeKind, getPointFromEvent]
   );
 
   const handlePointerMove = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      if (!draftStroke || draftStroke.pointerId !== event.pointerId) return;
+      const currentStroke = draftStrokeRef.current;
+      if (!currentStroke || currentStroke.pointerId !== event.pointerId) return;
       if (activePointerIdsRef.current.size !== 1) return;
       const point = getPointFromEvent(event);
       if (!point) return;
       event.preventDefault();
-      setDraftStroke((current) => {
-        if (!current || current.pointerId !== event.pointerId) return current;
-        return {
-          ...current,
-          points: appendPoint(current.points, point)
-        };
-      });
+      const nextStroke = {
+        ...currentStroke,
+        points: appendPoint(currentStroke.points, point)
+      };
+      draftStrokeRef.current = nextStroke;
+      setDraftStroke(nextStroke);
     },
-    [draftStroke, getPointFromEvent]
+    [getPointFromEvent]
   );
 
   const handlePointerUp = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       activePointerIdsRef.current.delete(event.pointerId);
-      if (draftStroke?.pointerId === event.pointerId) {
+      const currentStroke = draftStrokeRef.current;
+      if (currentStroke?.pointerId === event.pointerId) {
         event.preventDefault();
-        void finishStroke(event.pointerId);
+        draftStrokeRef.current = null;
+        setDraftStroke(null);
+        finishStroke(currentStroke);
       }
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
     },
-    [draftStroke, finishStroke]
+    [finishStroke]
   );
 
   const handlePointerCancel = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       activePointerIdsRef.current.delete(event.pointerId);
-      if (draftStroke?.pointerId === event.pointerId) {
+      if (draftStrokeRef.current?.pointerId === event.pointerId) {
+        draftStrokeRef.current = null;
         setDraftStroke(null);
       }
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
     },
-    [draftStroke]
+    []
   );
 
   return (
