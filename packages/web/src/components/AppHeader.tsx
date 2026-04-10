@@ -14,10 +14,16 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   MoreOutlined,
+  UndoOutlined,
   UploadOutlined
 } from "@ant-design/icons";
 import type { ThemeMode } from "../hooks/useThemeMode";
-import { PEN_COLORS, type PdfAnnotationMeta, type PdfAnnotationUiState } from "./PdfViewerPanel";
+import {
+  ANNOTATION_COLORS,
+  ANNOTATION_WIDTH_OPTIONS,
+  type PdfAnnotationMeta,
+  type PdfAnnotationUiState
+} from "./PdfViewerPanel";
 
 export function AppHeader(props: {
   compact: boolean;
@@ -49,6 +55,7 @@ export function AppHeader(props: {
   onAnnotationUiChange: (next: PdfAnnotationUiState) => void;
   onClearCurrentPageAnnotations: () => void;
   onClearAllAnnotations: () => void;
+  onUndoLastAnnotation: () => void;
 }) {
   const {
     compact,
@@ -73,7 +80,8 @@ export function AppHeader(props: {
     annotationMeta,
     onAnnotationUiChange,
     onClearCurrentPageAnnotations,
-    onClearAllAnnotations
+    onClearAllAnnotations,
+    onUndoLastAnnotation
   } = props;
 
   const labelMap = new Map<string, string>();
@@ -111,7 +119,14 @@ export function AppHeader(props: {
     onAnnotationUiChange({
       ...annotationUi,
       penColor: color,
-      mode: "pen"
+      mode: annotationUi.mode === "highlighter" ? "highlighter" : "pen"
+    });
+  };
+
+  const setAnnotationWidthKey = (widthKey: number) => {
+    onAnnotationUiChange({
+      ...annotationUi,
+      widthKey
     });
   };
 
@@ -208,11 +223,22 @@ export function AppHeader(props: {
           onClick={() => setAnnotationMode("erase")}
         />
       </Tooltip>
+      <Tooltip title="撤回上一笔">
+        <Button
+          type="text"
+          shape="circle"
+          size="large"
+          icon={<UndoOutlined />}
+          aria-label="撤回上一笔"
+          disabled={annotationMeta.totalAnnotations === 0}
+          onClick={onUndoLastAnnotation}
+        />
+      </Tooltip>
 
       <div style={{ width: 1, height: 22, background: "rgba(120,120,120,0.25)", flex: "0 0 auto" }} />
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "0 0 auto" }}>
-        {PEN_COLORS.map((color) => (
+        {ANNOTATION_COLORS.map((color) => (
           <button
             key={color}
             type="button"
@@ -230,6 +256,40 @@ export function AppHeader(props: {
               cursor: "pointer"
             }}
           />
+        ))}
+      </div>
+
+      <div style={{ width: 1, height: 22, background: "rgba(120,120,120,0.25)", flex: "0 0 auto" }} />
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "0 0 auto" }}>
+        {ANNOTATION_WIDTH_OPTIONS.map((option) => (
+          <button
+            key={option.key}
+            type="button"
+            aria-label={`选择粗细 ${option.key + 1}`}
+            onClick={() => setAnnotationWidthKey(option.key)}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 30,
+              height: 30,
+              borderRadius: 999,
+              border: annotationUi.widthKey === option.key ? "1px solid #1677ff" : "1px solid rgba(120,120,120,0.18)",
+              background: annotationUi.widthKey === option.key ? "rgba(22,119,255,0.1)" : "transparent",
+              padding: 0,
+              cursor: "pointer"
+            }}
+          >
+            <span
+              style={{
+                width: 14,
+                height: option.preview,
+                borderRadius: 999,
+                background: annotationUi.penColor
+              }}
+            />
+          </button>
         ))}
       </div>
 

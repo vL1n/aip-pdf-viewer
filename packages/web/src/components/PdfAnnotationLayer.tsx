@@ -34,11 +34,19 @@ function buildSvgPath(points: PdfAnnotationPoint[], width: number, height: numbe
     .join(" ");
 }
 
-function getStrokeStyle(kind: PdfAnnotationKind, color: string) {
+function getStrokeStyle(kind: PdfAnnotationKind, color: string, widthKey: number) {
+  const widthOptions = [
+    { key: 0, pen: 0.0028, highlighter: 0.01 },
+    { key: 1, pen: 0.0038, highlighter: 0.013 },
+    { key: 2, pen: 0.0048, highlighter: 0.016 },
+    { key: 3, pen: 0.0062, highlighter: 0.02 },
+    { key: 4, pen: 0.0078, highlighter: 0.024 }
+  ] as const;
+  const width = widthOptions.find((option) => option.key === widthKey) ?? widthOptions[2];
   return {
     color,
     opacity: kind === "highlighter" ? 0.35 : 0.92,
-    strokeWidth: kind === "highlighter" ? 0.014 : 0.0045
+    strokeWidth: kind === "highlighter" ? width.highlighter : width.pen
   };
 }
 
@@ -59,6 +67,7 @@ export function PdfAnnotationLayer(props: {
   height: number;
   mode: AnnotationMode;
   penColor: string;
+  widthKey: number;
   annotations: PdfAnnotation[];
   onCreateAnnotation: (input: {
     pageIndex: number;
@@ -70,7 +79,7 @@ export function PdfAnnotationLayer(props: {
   }) => Promise<void> | void;
   onDeleteAnnotation: (id: number) => Promise<void> | void;
 }) {
-  const { pageIndex, width, height, mode, penColor, annotations, onCreateAnnotation, onDeleteAnnotation } = props;
+  const { pageIndex, width, height, mode, penColor, widthKey, annotations, onCreateAnnotation, onDeleteAnnotation } = props;
 
   const layerRef = useRef<HTMLDivElement>(null);
   const activePointerIdsRef = useRef<Set<number>>(new Set());
@@ -80,7 +89,7 @@ export function PdfAnnotationLayer(props: {
   const submittedStrokeKeysRef = useRef<Set<string>>(new Set());
 
   const activeKind = mode === "pen" || mode === "highlighter" ? mode : null;
-  const activeStroke = activeKind ? getStrokeStyle(activeKind, activeKind === "highlighter" ? "#fadb14" : penColor) : null;
+  const activeStroke = activeKind ? getStrokeStyle(activeKind, penColor, widthKey) : null;
   const draftPath = useMemo(
     () => (draftStroke ? buildSvgPath(draftStroke.points, width, height) : ""),
     [draftStroke, height, width]
@@ -103,7 +112,7 @@ export function PdfAnnotationLayer(props: {
       const strokeKey = buildStrokeKey(stroke);
       if (submittedStrokeKeysRef.current.has(strokeKey)) return;
       submittedStrokeKeysRef.current.add(strokeKey);
-      const style = getStrokeStyle(stroke.kind, stroke.kind === "highlighter" ? "#fadb14" : penColor);
+      const style = getStrokeStyle(stroke.kind, penColor, widthKey);
       void onCreateAnnotation({
         pageIndex,
         kind: stroke.kind,
@@ -113,7 +122,7 @@ export function PdfAnnotationLayer(props: {
         points: stroke.points
       });
     },
-    [onCreateAnnotation, pageIndex, penColor]
+    [onCreateAnnotation, pageIndex, penColor, widthKey]
   );
 
   const handlePointerDown = useCallback(

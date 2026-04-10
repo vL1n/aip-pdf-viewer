@@ -27,7 +27,13 @@ import { AirportGate } from "./components/AirportGate";
 import { AppHeader } from "./components/AppHeader";
 import { IndexStatusBar } from "./components/IndexStatusBar";
 import { SidebarPanel } from "./components/SidebarPanel";
-import { PEN_COLORS, PdfViewerPanel, type PdfAnnotationMeta, type PdfAnnotationUiState } from "./components/PdfViewerPanel";
+import {
+  ANNOTATION_COLORS,
+  DEFAULT_ANNOTATION_WIDTH_KEY,
+  PdfViewerPanel,
+  type PdfAnnotationMeta,
+  type PdfAnnotationUiState
+} from "./components/PdfViewerPanel";
 import { RouteIntegratedPage } from "./components/RouteIntegratedPage";
 import { buildChartGroupTags, buildSidebarTreeData } from "./selectors/sidebar";
 import type { ThemeMode } from "./hooks/useThemeMode";
@@ -70,7 +76,8 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
   const [annotationUi, setAnnotationUi] = useState<PdfAnnotationUiState>({
     toolsOpen: false,
     mode: "browse",
-    penColor: PEN_COLORS[0]
+    penColor: ANNOTATION_COLORS[2],
+    widthKey: DEFAULT_ANNOTATION_WIDTH_KEY
   });
   const [annotationMeta, setAnnotationMeta] = useState<PdfAnnotationMeta>({
     hasPdf: false,
@@ -80,6 +87,7 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
   });
   const [clearPageRequestKey, setClearPageRequestKey] = useState(0);
   const [clearDocumentRequestKey, setClearDocumentRequestKey] = useState(0);
+  const [undoLastRequestKey, setUndoLastRequestKey] = useState(0);
   const [chartGroupFilter, setChartGroupFilter] = useState<string>("全部");
   const [viewMode, setViewMode] = useState<"全部" | "收藏">("全部");
   const [favoriteRelPaths, setFavoriteRelPaths] = useState<Set<string>>(new Set());
@@ -446,6 +454,7 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
             onAnnotationUiChange={setAnnotationUi}
             onClearCurrentPageAnnotations={() => setClearPageRequestKey((v) => v + 1)}
             onClearAllAnnotations={() => setClearDocumentRequestKey((v) => v + 1)}
+            onUndoLastAnnotation={() => setUndoLastRequestKey((v) => v + 1)}
           />
         ) : null}
 
@@ -524,6 +533,7 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
                 onAnnotationMetaChange={setAnnotationMeta}
                 clearPageRequestKey={clearPageRequestKey}
                 clearDocumentRequestKey={clearDocumentRequestKey}
+                undoLastRequestKey={undoLastRequestKey}
               />
             </div>
           </Layout.Content>

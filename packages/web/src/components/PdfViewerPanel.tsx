@@ -5,7 +5,8 @@ import {
   EditOutlined,
   EyeOutlined,
   FormOutlined,
-  HighlightOutlined
+  HighlightOutlined,
+  UndoOutlined
 } from "@ant-design/icons";
 import { Button, Empty, Popconfirm, Tooltip, message } from "antd";
 import type { Plugin } from "@react-pdf-viewer/core";
@@ -24,12 +25,32 @@ import { PdfAnnotationLayer, type AnnotationMode } from "./PdfAnnotationLayer";
 const MIN_SCALE = 0.5;
 const MAX_SCALE = 3;
 const WHEEL_DELTA_FACTOR = 0.002;
-export const PEN_COLORS = ["#ff4d4f", "#1677ff", "#13c2c2", "#722ed1", "#111111"];
+export const ANNOTATION_COLORS = [
+  "#111111",
+  "#8c8c8c",
+  "#ff4d4f",
+  "#fa8c16",
+  "#fadb14",
+  "#52c41a",
+  "#13c2c2",
+  "#1677ff",
+  "#2f54eb",
+  "#722ed1"
+] as const;
+export const ANNOTATION_WIDTH_OPTIONS = [
+  { key: 0, pen: 0.0028, highlighter: 0.01, preview: 2 },
+  { key: 1, pen: 0.0038, highlighter: 0.013, preview: 3 },
+  { key: 2, pen: 0.0048, highlighter: 0.016, preview: 4 },
+  { key: 3, pen: 0.0062, highlighter: 0.02, preview: 5 },
+  { key: 4, pen: 0.0078, highlighter: 0.024, preview: 6 }
+] as const;
+export const DEFAULT_ANNOTATION_WIDTH_KEY = 2;
 
 export type PdfAnnotationUiState = {
   toolsOpen: boolean;
   mode: AnnotationMode;
   penColor: string;
+  widthKey: number;
 };
 
 export type PdfAnnotationMeta = {
@@ -94,6 +115,7 @@ export function PdfViewerPanel(props: {
   onAnnotationMetaChange?: (next: PdfAnnotationMeta) => void;
   clearPageRequestKey?: number;
   clearDocumentRequestKey?: number;
+  undoLastRequestKey?: number;
 }) {
   const {
     openedFileId,
@@ -108,7 +130,8 @@ export function PdfViewerPanel(props: {
     onAnnotationUiChange,
     onAnnotationMetaChange,
     clearPageRequestKey = 0,
-    clearDocumentRequestKey = 0
+    clearDocumentRequestKey = 0,
+    undoLastRequestKey = 0
   } = props;
 
   // 必须在顶层无条件调用，否则 zoomPlugin 内部的 Hooks 会违反 React 规则
@@ -121,10 +144,12 @@ export function PdfViewerPanel(props: {
   const nextTempAnnotationIdRef = useRef(-1);
   const pendingCreateKeysRef = useRef<Set<string>>(new Set());
   const recentCreateKeysRef = useRef<Map<string, number>>(new Map());
+  const suppressedTempAnnotationIdsRef = useRef<Set<number>>(new Set());
   const [pinchState, setPinchState] = useState<{ initialDistance: number; initialScale: number } | null>(null);
   const [internalAnnotationToolsOpen, setInternalAnnotationToolsOpen] = useState(false);
   const [internalAnnotationMode, setInternalAnnotationMode] = useState<AnnotationMode>("browse");
-  const [internalPenColor, setInternalPenColor] = useState(PEN_COLORS[0]);
+  const [internalPenColor, setInternalPenColor] = useState<string>(ANNOTATION_COLORS[2]);
+  const [internalWidthKey, setInternalWidthKey] = useState<number>(DEFAULT_ANNOTATION_WIDTH_KEY);
   const [annotations, setAnnotations] = useState<PdfAnnotation[]>([]);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const pinchStateRef = useRef(pinchState);
@@ -135,6 +160,7 @@ export function PdfViewerPanel(props: {
   const annotationToolsOpen = annotationUi?.toolsOpen ?? internalAnnotationToolsOpen;
   const annotationMode = annotationUi?.mode ?? internalAnnotationMode;
   const penColor = annotationUi?.penColor ?? internalPenColor;
+  const widthKey = annotationUi?.widthKey ?? internalWidthKey;
   const isAnnotationUiControlled = annotationUi != null;
   const clampScale = useCallback((s: number) => Math.max(MIN_SCALE, Math.min(MAX_SCALE, s)), []);
 
@@ -143,18 +169,20 @@ export function PdfViewerPanel(props: {
       const next: PdfAnnotationUiState = {
         toolsOpen: patch.toolsOpen ?? annotationToolsOpen,
         mode: patch.mode ?? annotationMode,
-        penColor: patch.penColor ?? penColor
+        penColor: patch.penColor ?? penColor,
+        widthKey: patch.widthKey ?? widthKey
       };
 
       if (!isAnnotationUiControlled) {
         setInternalAnnotationToolsOpen(next.toolsOpen);
         setInternalAnnotationMode(next.mode);
         setInternalPenColor(next.penColor);
+        setInternalWidthKey(next.widthKey);
       }
 
       onAnnotationUiChange?.(next);
     },
-    [annotationMode, annotationToolsOpen, isAnnotationUiControlled, onAnnotationUiChange, penColor]
+    [annotationMode, annotationToolsOpen, isAnnotationUiControlled, onAnnotationUiChange, penColor, widthKey]
   );
 
   useEffect(() => {
@@ -164,7 +192,8 @@ export function PdfViewerPanel(props: {
       if (!isAnnotationUiControlled) {
         setInternalAnnotationToolsOpen(false);
         setInternalAnnotationMode("browse");
-        setInternalPenColor(PEN_COLORS[0]);
+        setInternalPenColor(ANNOTATION_COLORS[2]);
+        setInternalWidthKey(DEFAULT_ANNOTATION_WIDTH_KEY);
       }
       scaleRef.current = 1;
       return;
@@ -253,9 +282,26 @@ export function PdfViewerPanel(props: {
           strokeWidth: input.strokeWidth,
           points: input.points
         });
+        if (suppressedTempAnnotationIdsRef.current.has(tempId)) {
+          suppressedTempAnnotationIdsRef.current.delete(tempId);
+          setAnnotations((prev) => prev.filter((item) => item.id !== tempId && item.id !== res.annotation.id));
+          recentCreateKeysRef.current.set(requestKey, Date.now());
+          try {
+            await apiDeleteAnnotation(res.annotation.id);
+          } catch (deleteError: any) {
+            setAnnotations((prev) => sortAnnotations([...prev, res.annotation]));
+            void message.error(`同步撤回标注失败：${deleteError?.message || String(deleteError)}`);
+          }
+          return;
+        }
         setAnnotations((prev) => sortAnnotations(prev.map((item) => (item.id === tempId ? res.annotation : item))));
         recentCreateKeysRef.current.set(requestKey, Date.now());
       } catch (e: any) {
+        if (suppressedTempAnnotationIdsRef.current.has(tempId)) {
+          suppressedTempAnnotationIdsRef.current.delete(tempId);
+          setAnnotations((prev) => prev.filter((item) => item.id !== tempId));
+          return;
+        }
         setAnnotations((prev) => prev.filter((item) => item.id !== tempId));
         void message.error(`保存标注失败：${e?.message || String(e)}`);
       } finally {
@@ -271,7 +317,10 @@ export function PdfViewerPanel(props: {
       if (!removed) return;
 
       setAnnotations((prev) => prev.filter((item) => item.id !== id));
-      if (id <= 0) return;
+      if (id <= 0) {
+        suppressedTempAnnotationIdsRef.current.add(id);
+        return;
+      }
 
       try {
         await apiDeleteAnnotation(id);
@@ -290,6 +339,9 @@ export function PdfViewerPanel(props: {
       const removed =
         scope === "page" ? annotations.filter((item) => item.pageIndex === currentPageIndex) : annotations;
       if (removed.length === 0) return;
+      for (const item of removed) {
+        if (item.id <= 0) suppressedTempAnnotationIdsRef.current.add(item.id);
+      }
 
       setAnnotations((prev) =>
         scope === "page" ? prev.filter((item) => item.pageIndex !== currentPageIndex) : []
@@ -306,6 +358,28 @@ export function PdfViewerPanel(props: {
     },
     [annotations, currentPageIndex, openedFileId]
   );
+
+  const handleUndoLastAnnotation = useCallback(async () => {
+    const latest = [...annotations].sort((a, b) => {
+      if (a.createdAtMs !== b.createdAtMs) return b.createdAtMs - a.createdAtMs;
+      return b.id - a.id;
+    })[0];
+    if (!latest) return;
+
+    setAnnotations((prev) => prev.filter((item) => item.id !== latest.id));
+
+    if (latest.id <= 0) {
+      suppressedTempAnnotationIdsRef.current.add(latest.id);
+      return;
+    }
+
+    try {
+      await apiDeleteAnnotation(latest.id);
+    } catch (e: any) {
+      setAnnotations((prev) => sortAnnotations([...prev, latest]));
+      void message.error(`撤回失败：${e?.message || String(e)}`);
+    }
+  }, [annotations]);
 
   const toggleAnnotationTools = useCallback(() => {
     const nextToolsOpen = !annotationToolsOpen;
@@ -324,7 +398,17 @@ export function PdfViewerPanel(props: {
 
   const setActivePenColor = useCallback(
     (color: string) => {
-      updateAnnotationUi({ penColor: color, mode: "pen" });
+      updateAnnotationUi({
+        penColor: color,
+        mode: annotationMode === "highlighter" ? "highlighter" : "pen"
+      });
+    },
+    [annotationMode, updateAnnotationUi]
+  );
+
+  const setActiveWidthKey = useCallback(
+    (nextWidthKey: number) => {
+      updateAnnotationUi({ widthKey: nextWidthKey });
     },
     [updateAnnotationUi]
   );
@@ -336,6 +420,8 @@ export function PdfViewerPanel(props: {
   effectiveAnnotationModeRef.current = effectiveAnnotationMode;
   const penColorRef = useRef(penColor);
   penColorRef.current = penColor;
+  const widthKeyRef = useRef(widthKey);
+  widthKeyRef.current = widthKey;
   const createAnnotationRef = useRef(handleCreateAnnotation);
   createAnnotationRef.current = handleCreateAnnotation;
   const deleteAnnotationRef = useRef(handleDeleteAnnotation);
@@ -351,6 +437,7 @@ export function PdfViewerPanel(props: {
           height={renderProps.height}
           mode={effectiveAnnotationModeRef.current}
           penColor={penColorRef.current}
+          widthKey={widthKeyRef.current}
           annotations={annotationsByPageRef.current.get(renderProps.pageIndex) ?? []}
           onCreateAnnotation={(input) => createAnnotationRef.current(input)}
           onDeleteAnnotation={(id) => deleteAnnotationRef.current(id)}
@@ -462,6 +549,16 @@ export function PdfViewerPanel(props: {
     lastClearDocumentRequestKeyRef.current = clearDocumentRequestKey;
   }, [clearDocumentRequestKey, handleClearAnnotations]);
 
+  const lastUndoLastRequestKeyRef = useRef(undoLastRequestKey);
+  useEffect(() => {
+    if (undoLastRequestKey > 0 && undoLastRequestKey !== lastUndoLastRequestKeyRef.current) {
+      lastUndoLastRequestKeyRef.current = undoLastRequestKey;
+      void handleUndoLastAnnotation();
+      return;
+    }
+    lastUndoLastRequestKeyRef.current = undoLastRequestKey;
+  }, [handleUndoLastAnnotation, undoLastRequestKey]);
+
   return (
     <div
       style={{
@@ -550,66 +647,99 @@ export function PdfViewerPanel(props: {
                             onClick={() => setActiveAnnotationMode("erase")}
                           />
                         </Tooltip>
-                      </div>
+                        <Tooltip title="撤回上一笔">
+                          <Button
+                            type="text"
+                            shape="circle"
+                            size="large"
+                            icon={<UndoOutlined />}
+                            aria-label="撤回上一笔"
+                            disabled={totalAnnotations === 0}
+                            onClick={() => void handleUndoLastAnnotation()}
+                          />
+                        </Tooltip>
+                    </div>
 
-                      <div className="pdfAnnotationDivider" />
+                    <div className="pdfAnnotationDivider" />
 
-                      <div className="pdfAnnotationColorCluster">
-                        {PEN_COLORS.map((color) => (
-                          <button
-                            key={color}
-                            type="button"
-                            className="pdfAnnotationColor"
-                            aria-label={`选择颜色 ${color}`}
-                            onClick={() => setActivePenColor(color)}
+                    <div className="pdfAnnotationColorCluster">
+                      {ANNOTATION_COLORS.map((color) => (
+                        <button
+                          key={color}
+                          type="button"
+                          className="pdfAnnotationColor"
+                          aria-label={`选择颜色 ${color}`}
+                          onClick={() => setActivePenColor(color)}
+                          style={{
+                            background: color,
+                            borderRadius: 999,
+                            width: 22,
+                            height: 22,
+                            border: penColor === color ? "2px solid #1677ff" : "1px solid rgba(0,0,0,0.15)",
+                            boxShadow: penColor === color ? "0 0 0 2px rgba(22,119,255,0.18)" : "none",
+                            cursor: "pointer"
+                          }}
+                        />
+                      ))}
+                    </div>
+
+                    <div className="pdfAnnotationDivider" />
+
+                    <div className="pdfAnnotationWidthCluster">
+                      {ANNOTATION_WIDTH_OPTIONS.map((option) => (
+                        <button
+                          key={option.key}
+                          type="button"
+                          className={`pdfAnnotationWidthButton${widthKey === option.key ? " is-active" : ""}`}
+                          aria-label={`选择粗细 ${option.key + 1}`}
+                          onClick={() => setActiveWidthKey(option.key)}
+                        >
+                          <span
+                            className="pdfAnnotationWidthLine"
                             style={{
-                              background: color,
-                              borderRadius: 999,
-                              width: 22,
-                              height: 22,
-                              border: penColor === color ? "2px solid #1677ff" : "1px solid rgba(0,0,0,0.15)",
-                              boxShadow: penColor === color ? "0 0 0 2px rgba(22,119,255,0.18)" : "none",
-                              cursor: "pointer"
+                              height: option.preview,
+                              background: penColor
                             }}
                           />
-                        ))}
-                      </div>
+                        </button>
+                      ))}
+                    </div>
 
-                      <div className="pdfAnnotationDivider" />
+                    <div className="pdfAnnotationDivider" />
 
-                      <div className="pdfAnnotationStatusText">
-                        第 {currentPageIndex + 1} 页
-                      </div>
-                      <div className="pdfAnnotationStatusText">
-                        {currentPageAnnotations} 条标注
-                      </div>
+                    <div className="pdfAnnotationStatusText">
+                      第 {currentPageIndex + 1} 页
+                    </div>
+                    <div className="pdfAnnotationStatusText">
+                      {currentPageAnnotations} 条标注
+                    </div>
 
-                      <div className="pdfAnnotationDivider" />
+                    <div className="pdfAnnotationDivider" />
 
-                      <div className="pdfAnnotationActionCluster">
-                        <Popconfirm
-                          title="清空当前页标注？"
-                          okText="清空"
-                          cancelText="取消"
-                          disabled={currentPageAnnotations === 0}
-                          onConfirm={() => void handleClearAnnotations("page")}
-                        >
-                          <Button type="text" danger disabled={currentPageAnnotations === 0}>
-                            清空本页
-                          </Button>
-                        </Popconfirm>
-                        <Popconfirm
-                          title="清空当前 PDF 的全部标注？"
-                          okText="清空"
-                          cancelText="取消"
-                          disabled={annotations.length === 0}
-                          onConfirm={() => void handleClearAnnotations("document")}
-                        >
-                          <Button type="text" danger disabled={annotations.length === 0}>
-                            清空全文
-                          </Button>
-                        </Popconfirm>
-                      </div>
+                    <div className="pdfAnnotationActionCluster">
+                      <Popconfirm
+                        title="清空当前页标注？"
+                        okText="清空"
+                        cancelText="取消"
+                        disabled={currentPageAnnotations === 0}
+                        onConfirm={() => void handleClearAnnotations("page")}
+                      >
+                        <Button type="text" danger disabled={currentPageAnnotations === 0}>
+                          清空本页
+                        </Button>
+                      </Popconfirm>
+                      <Popconfirm
+                        title="清空当前 PDF 的全部标注？"
+                        okText="清空"
+                        cancelText="取消"
+                        disabled={annotations.length === 0}
+                        onConfirm={() => void handleClearAnnotations("document")}
+                      >
+                        <Button type="text" danger disabled={annotations.length === 0}>
+                          清空全文
+                        </Button>
+                      </Popconfirm>
+                    </div>
                     </>
                   ) : (
                     <div className="pdfAnnotationStatusText">
