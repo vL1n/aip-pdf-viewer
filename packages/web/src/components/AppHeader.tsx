@@ -93,6 +93,7 @@ export function AppHeader(props: {
   }));
   const isRouteMode = selectedIcaos.length === 2;
   const annotationModeOpen = annotationEnabled && annotationUi.toolsOpen;
+  const compactAnnotationMode = compact && annotationModeOpen;
 
   const openPdfInNewWindow = () => {
     if (!pdfHref) return;
@@ -165,16 +166,20 @@ export function AppHeader(props: {
 
   const annotationBar = annotationEnabled ? (
     <div
+      className="appHeaderAnnotationBar"
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 12,
+        gap: compact ? 10 : 12,
         minWidth: 0,
-        flex: "0 1 auto",
+        flex: compact ? "1 1 100%" : "0 1 auto",
+        width: compact ? "100%" : undefined,
+        maxWidth: compact ? "100%" : "min(100%, calc(100vw - 260px))",
+        boxSizing: "border-box",
         overflowX: "auto",
         overflowY: "hidden",
         whiteSpace: "nowrap",
-        padding: "0 12px",
+        padding: compact ? "0 10px" : "0 12px",
         height: 44,
         borderRadius: 999,
         border: "1px solid rgba(15,23,42,0.08)",
@@ -249,8 +254,8 @@ export function AppHeader(props: {
               padding: 0,
               background: color,
               borderRadius: 999,
-              width: 22,
-              height: 22,
+              width: compact ? 24 : 22,
+              height: compact ? 24 : 22,
               border: annotationUi.penColor === color ? "2px solid #1677ff" : "1px solid rgba(0,0,0,0.15)",
               boxShadow: annotationUi.penColor === color ? "0 0 0 2px rgba(22,119,255,0.18)" : "none",
               cursor: "pointer"
@@ -272,8 +277,8 @@ export function AppHeader(props: {
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
-              width: 30,
-              height: 30,
+              width: compact ? 34 : 30,
+              height: compact ? 34 : 30,
               borderRadius: 999,
               border: annotationUi.widthKey === option.key ? "1px solid #1677ff" : "1px solid rgba(120,120,120,0.18)",
               background: annotationUi.widthKey === option.key ? "rgba(22,119,255,0.1)" : "transparent",
@@ -328,13 +333,38 @@ export function AppHeader(props: {
       </Popconfirm>
     </div>
   ) : null;
+  const headerBrand = (
+    <Space size={12} align="center" style={{ minWidth: 0, overflow: "hidden" }}>
+      <Button
+        type="text"
+        aria-label={siderCollapsed ? "展开侧边栏" : "收起侧边栏"}
+        icon={siderCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+        onClick={onToggleSider}
+      />
+      <Typography.Text strong ellipsis style={{ minWidth: 0 }}>
+        Charts Viewer
+      </Typography.Text>
+    </Space>
+  );
+  const annotationToggleButton = annotationEnabled ? (
+    <Tooltip title={annotationModeOpen ? "退出标注" : "进入标注"}>
+      <Button
+        type={annotationModeOpen ? "primary" : "default"}
+        shape="circle"
+        size="large"
+        icon={annotationModeOpen ? <CloseOutlined /> : <FormOutlined />}
+        aria-label={annotationModeOpen ? "退出标注" : "进入标注"}
+        onClick={toggleAnnotationTools}
+      />
+    </Tooltip>
+  ) : null;
 
   return (
     <Layout.Header
       style={{
         flex: "0 0 auto",
         display: "flex",
-        alignItems: "center",
+        alignItems: compactAnnotationMode ? "stretch" : "center",
         flexWrap: compact ? "wrap" : "nowrap",
         rowGap: compact ? 8 : 0,
         whiteSpace: "nowrap",
@@ -346,119 +376,108 @@ export function AppHeader(props: {
         borderBottom: `1px solid ${borderColor}`
       }}
     >
-      <Space size={compact ? 8 : 12} align="center" style={{ width: "100%", justifyContent: "space-between", minWidth: 0 }}>
-        <Space size={12} align="center" style={{ minWidth: 0, overflow: "hidden" }}>
-          <Button
-            type="text"
-            aria-label={siderCollapsed ? "展开侧边栏" : "收起侧边栏"}
-            icon={siderCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-            onClick={onToggleSider}
-          />
-          <Typography.Text strong ellipsis style={{ minWidth: 0 }}>
-            Charts Viewer
-          </Typography.Text>
-        </Space>
+      {compactAnnotationMode ? (
+        <div className="appHeaderAnnotationMobileLayout">
+          <div className="appHeaderAnnotationMobileTop">
+            {headerBrand}
+            {annotationToggleButton}
+          </div>
+          {annotationBar}
+        </div>
+      ) : (
+        <Space size={compact ? 8 : 12} align="center" style={{ width: "100%", justifyContent: "space-between", minWidth: 0 }}>
+          {headerBrand}
 
-        <Space
-          size={compact ? 8 : 12}
-          align="center"
-          style={{
-            minWidth: 0,
-            justifyContent: "flex-end",
-            flexWrap: annotationModeOpen ? "nowrap" : compact ? "wrap" : "nowrap",
-            overflowX: annotationModeOpen ? "auto" : "visible"
-          }}
-        >
-          {annotationModeOpen ? (
-            annotationBar
-          ) : (
-            <>
-              {/* 航线模式下（双机场）由侧边栏的“起/降机场”Tag 负责切换；顶部不再展示 Select */}
-              {isRouteMode ? (
-                <Typography.Text type="secondary" ellipsis style={{ maxWidth: compact ? "70vw" : 320 }}>
-                  当前：{labelMap.get(activeIcao) || activeIcao || "-"}
-                </Typography.Text>
-              ) : (
-                <Select
-                  style={{
-                    width: compact ? 180 : 280,
-                    maxWidth: compact ? "60vw" : "35vw",
-                    flex: compact ? "1 1 180px" : "0 1 280px",
-                    minWidth: compact ? 140 : 200
-                  }}
-                  value={activeIcao || undefined}
-                  onChange={(v: string | undefined) => onActiveIcaoChange(v || "")}
-                  disabled={!ready || selectedIcaos.length === 0}
-                  showSearch
-                  allowClear
-                  optionFilterProp="label"
-                  options={airportOptions}
-                  placeholder="切换机场"
-                />
-              )}
+          <Space
+            size={compact ? 8 : 12}
+            align="center"
+            style={{
+              minWidth: 0,
+              justifyContent: "flex-end",
+              flexWrap: annotationModeOpen ? "nowrap" : compact ? "wrap" : "nowrap",
+              overflowX: annotationModeOpen ? "auto" : "visible"
+            }}
+          >
+            {annotationModeOpen ? (
+              annotationBar
+            ) : (
+              <>
+                {/* 航线模式下（双机场）由侧边栏的“起/降机场”Tag 负责切换；顶部不再展示 Select */}
+                {isRouteMode ? (
+                  <Typography.Text type="secondary" ellipsis style={{ maxWidth: compact ? "70vw" : 320 }}>
+                    当前：{labelMap.get(activeIcao) || activeIcao || "-"}
+                  </Typography.Text>
+                ) : (
+                  <Select
+                    style={{
+                      width: compact ? 180 : 280,
+                      maxWidth: compact ? "60vw" : "35vw",
+                      flex: compact ? "1 1 180px" : "0 1 280px",
+                      minWidth: compact ? 140 : 200
+                    }}
+                    value={activeIcao || undefined}
+                    onChange={(v: string | undefined) => onActiveIcaoChange(v || "")}
+                    disabled={!ready || selectedIcaos.length === 0}
+                    showSearch
+                    allowClear
+                    optionFilterProp="label"
+                    options={airportOptions}
+                    placeholder="切换机场"
+                  />
+                )}
 
-              {compact ? (
-                <Dropdown
-                  trigger={["click"]}
-                  menu={{
-                    items: [
-                      ...(openedFileId && pdfHref
-                        ? [{ key: "open", icon: <FilePdfOutlined />, label: "新窗口打开", onClick: openPdfInNewWindow } as any]
-                        : []),
-                      { key: "theme", type: "group" as any, label: "主题", children: themeItems as any },
-                      { key: "reset", label: "重新选择", onClick: onResetToSelection },
-                      { key: "export", icon: <DownloadOutlined />, label: "导出收藏", onClick: onExportFavorites },
-                      { key: "import", icon: <UploadOutlined />, label: "导入收藏", onClick: onTriggerImport }
-                    ]
-                  }}
-                >
-                  <Button icon={<MoreOutlined />} aria-label="更多" />
-                </Dropdown>
-              ) : (
-                <>
-                  <Button onClick={onResetToSelection}>重新选择</Button>
-                  <Dropdown trigger={["click"]} menu={{ items: [{ key: "theme", type: "group" as any, label: "主题", children: themeItems as any }] }}>
-                    <Button>主题</Button>
-                  </Dropdown>
-                  <Button icon={<DownloadOutlined />} onClick={onExportFavorites}>
-                    导出收藏
-                  </Button>
-                  <Button icon={<UploadOutlined />} onClick={onTriggerImport}>
-                    导入收藏
-                  </Button>
-                </>
-              )}
-
-              {!compact && openedFileId && pdfHref ? (
-                <Tooltip title="新窗口打开">
-                  <Button
-                    icon={<FilePdfOutlined />}
-                    href={pdfHref}
-                    target="_blank"
-                    type="default"
-                    aria-label="新窗口打开"
+                {compact ? (
+                  <Dropdown
+                    trigger={["click"]}
+                    menu={{
+                      items: [
+                        ...(openedFileId && pdfHref
+                          ? [{ key: "open", icon: <FilePdfOutlined />, label: "新窗口打开", onClick: openPdfInNewWindow } as any]
+                          : []),
+                        { key: "theme", type: "group" as any, label: "主题", children: themeItems as any },
+                        { key: "reset", label: "重新选择", onClick: onResetToSelection },
+                        { key: "export", icon: <DownloadOutlined />, label: "导出收藏", onClick: onExportFavorites },
+                        { key: "import", icon: <UploadOutlined />, label: "导入收藏", onClick: onTriggerImport }
+                      ]
+                    }}
                   >
-                    新窗口打开
-                  </Button>
-                </Tooltip>
-              ) : null}
-            </>
-          )}
+                    <Button icon={<MoreOutlined />} aria-label="更多" />
+                  </Dropdown>
+                ) : (
+                  <>
+                    <Button onClick={onResetToSelection}>重新选择</Button>
+                    <Dropdown trigger={["click"]} menu={{ items: [{ key: "theme", type: "group" as any, label: "主题", children: themeItems as any }] }}>
+                      <Button>主题</Button>
+                    </Dropdown>
+                    <Button icon={<DownloadOutlined />} onClick={onExportFavorites}>
+                      导出收藏
+                    </Button>
+                    <Button icon={<UploadOutlined />} onClick={onTriggerImport}>
+                      导入收藏
+                    </Button>
+                  </>
+                )}
 
-          {annotationEnabled ? (
-            <Tooltip title={annotationModeOpen ? "退出标注" : "进入标注"}>
-              <Button
-                type={annotationModeOpen ? "primary" : "default"}
-                shape="circle"
-                size="large"
-                icon={annotationModeOpen ? <CloseOutlined /> : <FormOutlined />}
-                aria-label={annotationModeOpen ? "退出标注" : "进入标注"}
-                onClick={toggleAnnotationTools}
-              />
-            </Tooltip>
-          ) : null}
+                {!compact && openedFileId && pdfHref ? (
+                  <Tooltip title="新窗口打开">
+                    <Button
+                      icon={<FilePdfOutlined />}
+                      href={pdfHref}
+                      target="_blank"
+                      type="default"
+                      aria-label="新窗口打开"
+                    >
+                      新窗口打开
+                    </Button>
+                  </Tooltip>
+                ) : null}
+              </>
+            )}
+
+            {annotationToggleButton}
+          </Space>
         </Space>
-      </Space>
+      )}
     </Layout.Header>
   );
 }

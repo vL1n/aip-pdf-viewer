@@ -113,6 +113,32 @@ body {
   padding-top: 2.5rem;
 }
 
+.appHeaderAnnotationBar {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+.appHeaderAnnotationBar::-webkit-scrollbar {
+  display: none;
+}
+
+.appHeaderAnnotationMobileLayout {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.appHeaderAnnotationMobileTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
 .pdfAnnotationToolbar {
   flex: 0 0 auto;
   position: relative;
