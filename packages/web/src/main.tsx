@@ -7,8 +7,6 @@ import zhCN from "antd/locale/zh_CN";
 import { App } from "./App";
 import { useThemeMode } from "./hooks/useThemeMode";
 import "antd/dist/reset.css";
-import "@react-pdf-viewer/core/lib/styles/index.css";
-import "@react-pdf-viewer/default-layout/lib/styles/index.css";
 import "./styles.css";
 
 function Root() {
@@ -29,5 +27,4 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <Root />
   </React.StrictMode>
 );
-
 

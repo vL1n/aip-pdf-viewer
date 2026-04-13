@@ -114,7 +114,7 @@ export function KmlImportPanel({
       const result = await apiRouteFit(points, {
         maxDistanceKm,
         sampleIntervalKm,
-        useAirways: true
+        preferAirways: true
       });
 
       if (result.success) {
