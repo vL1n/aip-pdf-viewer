@@ -4,6 +4,7 @@ using System.Windows.Forms;
 
 static class Program
 {
+    private const string UpdatedFromVersionArgName = "--updated-from-version";
     private static readonly string[] ManagedEntries =
     {
         "aip-launcher.exe",
@@ -19,6 +20,7 @@ static class Program
         public string TargetDir { get; init; } = "";
         public string RestartPath { get; init; } = "";
         public int? WaitPid { get; init; }
+        public string? PreviousVersion { get; init; }
         public List<string> RestartArgs { get; init; } = [];
     }
 
@@ -28,6 +30,7 @@ static class Program
         string? targetDir = null;
         string? restartPath = null;
         int? waitPid = null;
+        string? previousVersion = null;
         var restartArgs = new List<string>();
 
         var index = 0;
@@ -54,6 +57,9 @@ static class Program
                     waitPid = pid;
                     index += 1;
                     break;
+                case "--previous-version" when index + 1 < args.Length:
+                    previousVersion = args[++index];
+                    break;
                 default:
                     throw new ArgumentException($"未知参数：{args[index]}");
             }
@@ -74,11 +80,21 @@ static class Program
             TargetDir = targetDir,
             RestartPath = restartPath,
             WaitPid = waitPid,
+            PreviousVersion = previousVersion,
             RestartArgs = restartArgs
         };
     }
 
     private static bool PathExists(string path) => File.Exists(path) || Directory.Exists(path);
+
+    private static int MapProgress(int start, int end, int current, int total)
+    {
+        if (end <= start) return start;
+        if (total <= 0) return start;
+
+        var ratio = Math.Clamp((double)current / total, 0d, 1d);
+        return start + (int)Math.Round((end - start) * ratio);
+    }
 
     private static void RetryIo(Action action, int attempts = 60, int delayMs = 250)
     {
@@ -184,7 +200,11 @@ static class Program
         throw new FileNotFoundException($"更新包中缺少必要内容：{sourcePath}");
     }
 
-    private static void StartLauncher(string launcherPath, IReadOnlyList<string> launcherArgs)
+    private static void StartLauncher(
+        string launcherPath,
+        IReadOnlyList<string> launcherArgs,
+        string? updatedFromVersion = null
+    )
     {
         if (!File.Exists(launcherPath))
         {
@@ -203,10 +223,16 @@ static class Program
             psi.ArgumentList.Add(arg);
         }
 
+        if (!string.IsNullOrWhiteSpace(updatedFromVersion))
+        {
+            psi.ArgumentList.Add(UpdatedFromVersionArgName);
+            psi.ArgumentList.Add(updatedFromVersion);
+        }
+
         Process.Start(psi);
     }
 
-    private static void RunUpdate(UpdateOptions options)
+    private static void RunUpdate(UpdateOptions options, Action<UpdateProgressState>? report = null)
     {
         if (!Directory.Exists(options.SourceDir))
         {
@@ -217,7 +243,9 @@ static class Program
             throw new DirectoryNotFoundException($"目标目录不存在：{options.TargetDir}");
         }
 
+        report?.Invoke(new UpdateProgressState("正在等待旧版本退出...", "请不要关闭窗口", 5, options.WaitPid is not null));
         WaitForProcessExit(options.WaitPid);
+        report?.Invoke(new UpdateProgressState("正在备份当前文件...", "准备替换受管文件", 10));
 
         var backupDir = Path.Combine(
             options.TargetDir,
@@ -225,31 +253,56 @@ static class Program
         );
         Directory.CreateDirectory(backupDir);
 
+        var managedTargets = ManagedEntries
+            .Select(entry => new
+            {
+                Entry = entry,
+                TargetPath = Path.Combine(options.TargetDir, entry),
+                SourcePath = Path.Combine(options.SourceDir, entry)
+            })
+            .ToList();
+        var existingTargets = managedTargets.Where(item => PathExists(item.TargetPath)).ToList();
+
         var movedEntries = new List<(string OriginalPath, string BackupPath)>();
         var copiedEntries = new List<string>();
 
         try
         {
-            foreach (var entry in ManagedEntries)
+            for (var i = 0; i < existingTargets.Count; i++)
             {
-                var targetPath = Path.Combine(options.TargetDir, entry);
-                if (!PathExists(targetPath)) continue;
-
-                var backupPath = Path.Combine(backupDir, entry);
-                MovePath(targetPath, backupPath);
-                movedEntries.Add((targetPath, backupPath));
+                var item = existingTargets[i];
+                var backupPath = Path.Combine(backupDir, item.Entry);
+                MovePath(item.TargetPath, backupPath);
+                movedEntries.Add((item.TargetPath, backupPath));
+                report?.Invoke(new UpdateProgressState(
+                    "正在备份当前文件...",
+                    item.Entry,
+                    MapProgress(10, 40, i + 1, existingTargets.Count)
+                ));
             }
 
-            foreach (var entry in ManagedEntries)
+            report?.Invoke(new UpdateProgressState("正在写入新版本...", "开始复制更新文件", 45));
+            for (var i = 0; i < managedTargets.Count; i++)
             {
-                var sourcePath = Path.Combine(options.SourceDir, entry);
-                var targetPath = Path.Combine(options.TargetDir, entry);
-                CopyManagedEntry(sourcePath, targetPath);
-                copiedEntries.Add(targetPath);
+                var item = managedTargets[i];
+                report?.Invoke(new UpdateProgressState(
+                    "正在写入新版本...",
+                    item.Entry,
+                    MapProgress(45, 90, i, managedTargets.Count)
+                ));
+                CopyManagedEntry(item.SourcePath, item.TargetPath);
+                copiedEntries.Add(item.TargetPath);
+                report?.Invoke(new UpdateProgressState(
+                    "正在写入新版本...",
+                    item.Entry,
+                    MapProgress(45, 90, i + 1, managedTargets.Count)
+                ));
             }
 
+            report?.Invoke(new UpdateProgressState("正在清理旧版本备份...", "即将完成", 95));
             DeletePath(backupDir);
-            StartLauncher(options.RestartPath, options.RestartArgs);
+            report?.Invoke(new UpdateProgressState("正在重启应用...", "将打开新版本", 100));
+            StartLauncher(options.RestartPath, options.RestartArgs, options.PreviousVersion);
         }
         catch
         {
@@ -291,7 +344,12 @@ static class Program
         try
         {
             options = ParseArgs(args);
-            RunUpdate(options);
+            using var progressDialog = new UpdateProgressDialogController(
+                "AIP PDF Viewer 更新",
+                "正在替换应用文件..."
+            );
+            progressDialog.Report(new UpdateProgressState("正在替换应用文件...", "请稍候...", 1));
+            RunUpdate(options, progressDialog.Report);
             return 0;
         }
         catch (Exception ex)

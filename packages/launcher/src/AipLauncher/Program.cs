@@ -16,6 +16,7 @@ static class Program
     private const string ChecksumsFileName = "SHA256SUMS.txt";
     private const string LauncherExeName = "aip-launcher.exe";
     private const string UpdaterExeName = "aip-updater.exe";
+    private const string UpdatedFromVersionArgName = "--updated-from-version";
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     private static string AppName => "aip-pdf-viewer";
@@ -154,13 +155,52 @@ static class Program
         File.WriteAllText(ConfigPath, JsonSerializer.Serialize(cfg, new JsonSerializerOptions { WriteIndented = true }));
     }
 
-    private static string? GetRootFromArgs(string[] args)
+    private static string? GetArgumentValue(string[] args, string name)
     {
         for (var i = 0; i < args.Length; i++)
         {
-            if (args[i] == "--root" && i + 1 < args.Length) return args[i + 1];
+            if (args[i] == name && i + 1 < args.Length) return args[i + 1];
         }
         return null;
+    }
+
+    private static string? GetRootFromArgs(string[] args) => GetArgumentValue(args, "--root");
+
+    private static string? GetUpdatedFromVersion(string[] args) => GetArgumentValue(args, UpdatedFromVersionArgName);
+
+    private static void ShowCurrentVersionBanner()
+    {
+        try
+        {
+            Console.Title = $"AIP PDF Viewer {CurrentVersionText}";
+        }
+        catch
+        {
+            // 某些宿主环境不支持设置标题，忽略即可。
+        }
+
+        Console.WriteLine($"AIP PDF Viewer 当前版本：{CurrentVersionText}");
+    }
+
+    private static void ShowPostUpdateSuccessIfNeeded(string[] args)
+    {
+        var updatedFromVersion = GetUpdatedFromVersion(args);
+        if (string.IsNullOrWhiteSpace(updatedFromVersion))
+        {
+            return;
+        }
+
+        var body = string.Equals(updatedFromVersion, CurrentVersionText, StringComparison.OrdinalIgnoreCase)
+            ? $"更新已完成。\n当前版本：{CurrentVersionText}"
+            : $"更新已完成。\n{updatedFromVersion} -> {CurrentVersionText}";
+
+        Console.WriteLine(body.Replace('\n', ' '));
+        MessageBox.Show(
+            body,
+            "AIP PDF Viewer 更新",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Information
+        );
     }
 
     private static string PromptRoot(string? defaultValue)
@@ -276,7 +316,37 @@ static class Program
         Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
     }
 
-    private static async Task DownloadFileAsync(HttpClient client, string url, string targetPath, CancellationToken ct)
+    private static int MapProgress(int start, int end, long current, long total)
+    {
+        if (end <= start) return start;
+        if (total <= 0) return start;
+
+        var ratio = Math.Clamp((double)current / total, 0d, 1d);
+        return start + (int)Math.Round((end - start) * ratio);
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        double size = Math.Max(bytes, 0);
+        var unitIndex = 0;
+
+        while (size >= 1024 && unitIndex < units.Length - 1)
+        {
+            size /= 1024;
+            unitIndex += 1;
+        }
+
+        return $"{size:0.#} {units[unitIndex]}";
+    }
+
+    private static async Task DownloadFileAsync(
+        HttpClient client,
+        string url,
+        string targetPath,
+        CancellationToken ct,
+        Action<long, long?>? onProgress = null
+    )
     {
         Directory.CreateDirectory(Path.GetDirectoryName(targetPath) ?? BaseDir);
         var tempPath = $"{targetPath}.tmp";
@@ -288,18 +358,48 @@ static class Program
         await using (var source = await response.Content.ReadAsStreamAsync(ct))
         await using (var target = File.Create(tempPath))
         {
-            await source.CopyToAsync(target, ct);
+            var buffer = new byte[1024 * 64];
+            long totalRead = 0;
+            var totalLength = response.Content.Headers.ContentLength;
+
+            while (true)
+            {
+                var read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), ct);
+                if (read <= 0) break;
+
+                await target.WriteAsync(buffer.AsMemory(0, read), ct);
+                totalRead += read;
+                onProgress?.Invoke(totalRead, totalLength);
+            }
         }
 
         if (File.Exists(targetPath)) File.Delete(targetPath);
         File.Move(tempPath, targetPath);
     }
 
-    private static async Task<string> ComputeSha256Async(string filePath, CancellationToken ct)
+    private static async Task<string> ComputeSha256Async(
+        string filePath,
+        CancellationToken ct,
+        Action<long, long>? onProgress = null
+    )
     {
         await using var stream = File.OpenRead(filePath);
-        using var sha = SHA256.Create();
-        var hash = await sha.ComputeHashAsync(stream, ct);
+        using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = new byte[1024 * 64];
+        long totalRead = 0;
+        var totalLength = stream.Length;
+
+        while (true)
+        {
+            var read = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), ct);
+            if (read <= 0) break;
+
+            sha.AppendData(buffer, 0, read);
+            totalRead += read;
+            onProgress?.Invoke(totalRead, totalLength);
+        }
+
+        var hash = sha.GetHashAndReset();
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
@@ -326,7 +426,61 @@ static class Program
         throw new Exception($"未在 {ChecksumsFileName} 中找到 {assetName} 的 SHA256。");
     }
 
-    private static async Task<string> PrepareUpdateBundleAsync(ReleasePackage release, CancellationToken ct)
+    private static async Task ExtractZipAsync(
+        string zipPath,
+        string extractDir,
+        CancellationToken ct,
+        Action<int, int, string>? onProgress = null
+    )
+    {
+        if (Directory.Exists(extractDir))
+        {
+            Directory.Delete(extractDir, recursive: true);
+        }
+        Directory.CreateDirectory(extractDir);
+
+        using var archive = ZipFile.OpenRead(zipPath);
+        var entries = archive.Entries.ToList();
+        var totalEntries = Math.Max(entries.Count, 1);
+        var extractDirFullPath = Path.GetFullPath(extractDir);
+        var processed = 0;
+
+        foreach (var entry in entries)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var destinationPath = Path.GetFullPath(Path.Combine(extractDirFullPath, entry.FullName));
+            var isInsideExtractDir =
+                destinationPath.StartsWith(extractDirFullPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(destinationPath, extractDirFullPath, StringComparison.OrdinalIgnoreCase);
+
+            if (!isInsideExtractDir)
+            {
+                throw new IOException($"更新包包含非法路径：{entry.FullName}");
+            }
+
+            if (string.IsNullOrEmpty(entry.Name))
+            {
+                Directory.CreateDirectory(destinationPath);
+            }
+            else
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(destinationPath) ?? extractDirFullPath);
+                await using var source = entry.Open();
+                await using var target = File.Create(destinationPath);
+                await source.CopyToAsync(target, ct);
+            }
+
+            processed += 1;
+            onProgress?.Invoke(processed, totalEntries, entry.FullName);
+        }
+    }
+
+    private static async Task<string> PrepareUpdateBundleAsync(
+        ReleasePackage release,
+        CancellationToken ct,
+        Action<UpdateProgressState>? report
+    )
     {
         var versionDir = Path.Combine(UpdatesDir, release.Version.Original.Replace('+', '-'));
         var zipPath = Path.Combine(versionDir, ReleaseZipName);
@@ -341,23 +495,53 @@ static class Program
 
         using var client = CreateGitHubClient();
         Console.WriteLine($"发现新版本 {release.Version.Original}，开始下载更新包...");
-        await DownloadFileAsync(client, release.ZipDownloadUrl, zipPath, ct);
-        await DownloadFileAsync(client, release.ChecksumsDownloadUrl, checksumsPath, ct);
+        report?.Invoke(new UpdateProgressState("正在准备更新...", $"目标版本：{release.Version.Original}", 3));
+
+        await DownloadFileAsync(client, release.ZipDownloadUrl, zipPath, ct, (current, total) =>
+        {
+            var percent = total is > 0 ? MapProgress(5, 55, current, total.Value) : 20;
+            var detail = total is > 0
+                ? $"{FormatBytes(current)} / {FormatBytes(total.Value)}"
+                : $"已下载 {FormatBytes(current)}";
+            report?.Invoke(new UpdateProgressState("正在下载更新包...", detail, percent, total is null));
+        });
+
+        await DownloadFileAsync(client, release.ChecksumsDownloadUrl, checksumsPath, ct, (current, total) =>
+        {
+            var percent = total is > 0 ? MapProgress(56, 60, current, total.Value) : 58;
+            var detail = total is > 0
+                ? $"{ChecksumsFileName} · {FormatBytes(current)} / {FormatBytes(total.Value)}"
+                : $"正在下载 {ChecksumsFileName}";
+            report?.Invoke(new UpdateProgressState("正在下载校验文件...", detail, percent, total is null));
+        });
 
         var expectedHash = ReadExpectedSha256(checksumsPath, ReleaseZipName);
-        var actualHash = await ComputeSha256Async(zipPath, ct);
+        var actualHash = await ComputeSha256Async(zipPath, ct, (current, total) =>
+        {
+            var percent = MapProgress(61, 78, current, total);
+            var detail = $"{FormatBytes(current)} / {FormatBytes(total)}";
+            report?.Invoke(new UpdateProgressState("正在校验更新包...", detail, percent));
+        });
         if (!string.Equals(expectedHash, actualHash, StringComparison.OrdinalIgnoreCase))
         {
             throw new Exception($"更新包校验失败：期望 {expectedHash}，实际 {actualHash}。");
         }
 
-        ZipFile.ExtractToDirectory(zipPath, extractDir, overwriteFiles: true);
+        report?.Invoke(new UpdateProgressState("正在解压更新包...", "准备文件...", 79));
+        await ExtractZipAsync(zipPath, extractDir, ct, (current, total, entryName) =>
+        {
+            var percent = MapProgress(80, 97, current, total);
+            var detail = string.IsNullOrWhiteSpace(entryName) ? "正在展开目录结构..." : entryName;
+            report?.Invoke(new UpdateProgressState("正在解压更新包...", detail, percent));
+        });
+
         var updaterExe = Path.Combine(extractDir, UpdaterExeName);
         if (!File.Exists(updaterExe))
         {
             throw new Exception($"解压后的更新包缺少 {UpdaterExeName}。");
         }
 
+        report?.Invoke(new UpdateProgressState("正在启动更新器...", "即将完成下载阶段...", 99));
         return extractDir;
     }
 
@@ -382,6 +566,8 @@ static class Program
         psi.ArgumentList.Add(targetLauncherPath);
         psi.ArgumentList.Add("--wait-pid");
         psi.ArgumentList.Add(Environment.ProcessId.ToString());
+        psi.ArgumentList.Add("--previous-version");
+        psi.ArgumentList.Add(CurrentVersionText);
         psi.ArgumentList.Add("--");
 
         foreach (var arg in originalArgs)
@@ -441,7 +627,15 @@ static class Program
         {
             Directory.CreateDirectory(UpdatesDir);
             using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-            var extractDir = await PrepareUpdateBundleAsync(release, cts.Token);
+            using var progressDialog = new UpdateProgressDialogController(
+                "AIP PDF Viewer 更新",
+                "正在准备下载更新..."
+            );
+            progressDialog.Report(new UpdateProgressState("正在准备下载更新...", $"目标版本：{release.Version.Original}", 1));
+
+            var extractDir = await PrepareUpdateBundleAsync(release, cts.Token, progressDialog.Report);
+            progressDialog.Report(new UpdateProgressState("正在切换到安装阶段...", "将启动更新器替换文件", 100));
+
             var updaterStartInfo = BuildUpdaterStartInfo(extractDir, args);
             var updaterProcess = Process.Start(updaterStartInfo);
             if (updaterProcess is null)
@@ -497,6 +691,8 @@ static class Program
                 return;
             }
 
+            ShowCurrentVersionBanner();
+            ShowPostUpdateSuccessIfNeeded(args);
             EnsureBundleOk();
 
             var cfg = LoadConfig();
