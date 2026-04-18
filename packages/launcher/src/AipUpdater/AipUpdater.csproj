@@ -5,11 +5,10 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AssemblyName>aip-launcher</AssemblyName>
+    <AssemblyName>aip-updater</AssemblyName>
     <Version Condition="'$(Version)' == ''">0.0.0-dev</Version>
     <InformationalVersion Condition="'$(InformationalVersion)' == ''">$(Version)</InformationalVersion>
     <AssemblyVersion Condition="'$(AssemblyVersion)' == ''">0.0.0.0</AssemblyVersion>
     <FileVersion Condition="'$(FileVersion)' == ''">0.0.0.0</FileVersion>
   </PropertyGroup>
 </Project>
-

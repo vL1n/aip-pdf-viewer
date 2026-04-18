@@ -88,6 +88,8 @@ pnpm dist:win
 
 产物：`packages/launcher/dist-win/AIP-PDF-Viewer-win-x64.zip`
 
+Windows 便携版会在启动前自动检查 GitHub Releases 是否有新版本；发现更新后可自动下载整包、校验并完成替换重启。
+
 说明：双击 `aip-launcher.exe` 后**每次都会询问航图根目录**（会显示上次记录，回车可复用）。如需跳过询问，可用命令行传 `--root <path>` 或设置环境变量 `AIP_ROOT`。
 
 收藏/索引数据库位置（Windows 便携版）：
@@ -174,5 +176,4 @@ pnpm docker:build
 
 - `Charts.csv`/`Airports.csv` 可能是 **GBK/GB18030** 编码，服务端会自动按该编码解码并入库，用于中文搜索与分组。
 - 后端现在会 **先启动 HTTP**，然后在后台构建索引；索引未完成前，页面会展示进度条并暂时禁用树/搜索。
-
 
