@@ -12,7 +12,7 @@ import { initAnnotationsSchema, initFavoritesSchema } from "./sqlite.js";
 import { NavDatabase } from "./navdb.js";
 import { parseRoute } from "./routeParser.js";
 import { parseKml } from "./kmlParser.js";
-import { fitRoute, type FitOptions } from "./routeFitter.js";
+import { calculateShortestRoute, type ShortestRouteOptions } from "./routeShortest.js";
 
 function isInsideRoot(rootPath: string, filePath: string) {
   const root = path.resolve(rootPath);
@@ -678,6 +678,61 @@ export function createServer({ db, favoritesDb, navDb, rootPath, webDistPath, in
     return { airway, from, to, segment, count: segment?.length ?? 0 };
   });
 
+  /** 计算最短航路：优先使用航路图，无法接入航路时才退化为直连航点 */
+  app.post("/api/route/shortest", async (req, reply) => {
+    if (!navDatabase) {
+      return reply.code(503).send({
+        success: false,
+        error: "导航数据库不可用（未找到 nd.db3）",
+        routeString: "",
+        points: [],
+        legs: []
+      });
+    }
+
+    const body = (req.body || {}) as {
+      departure?: string;
+      arrival?: string;
+      via?: string[] | string;
+      options?: ShortestRouteOptions;
+    };
+    const departure = typeof body.departure === "string" ? body.departure.trim().toUpperCase() : "";
+    const arrival = typeof body.arrival === "string" ? body.arrival.trim().toUpperCase() : "";
+    const via =
+      typeof body.via === "string"
+        ? body.via.split(/[\s,，]+/).map((item) => item.trim().toUpperCase()).filter(Boolean)
+        : Array.isArray(body.via)
+          ? body.via.map((item) => String(item).trim().toUpperCase()).filter(Boolean)
+          : [];
+
+    if (!departure || !arrival) {
+      return reply.code(400).send({
+        success: false,
+        error: "请提供起飞机场和降落机场",
+        routeString: "",
+        points: [],
+        legs: []
+      });
+    }
+
+    try {
+      return calculateShortestRoute(navDatabase, {
+        departure,
+        arrival,
+        via,
+        options: body.options
+      });
+    } catch (err: any) {
+      return reply.code(500).send({
+        success: false,
+        error: err?.message || "最短航路计算失败",
+        routeString: "",
+        points: [],
+        legs: []
+      });
+    }
+  });
+
   // ---- KML Parsing (KML 解析) ----
 
   /** 解析 KML 文件 */
@@ -705,51 +760,15 @@ export function createServer({ db, favoritesDb, navDb, rootPath, webDistPath, in
     }
   });
 
-  /** 根据航迹拟合航路 */
-  app.post("/api/route/fit", async (req, reply) => {
-    if (!navDatabase) {
-      return reply.code(503).send({
-        success: false,
-        error: "导航数据库不可用（未找到 nd.db3）",
-        waypoints: [],
-        routeString: ""
-      });
-    }
-
-    const body = (req.body || {}) as {
-      points?: Array<{ lat: number; lon: number; altitude?: number }>;
-      options?: FitOptions;
-    };
-
-    const points = Array.isArray(body.points) ? body.points : [];
-
-    if (points.length < 2) {
-      return reply.code(400).send({
-        success: false,
-        error: "航迹点数量不足，至少需要 2 个点",
-        waypoints: [],
-        routeString: ""
-      });
-    }
-
-    // 转换为 KmlTrackPoint 格式
-    const trackPoints = points.map(p => ({
-      lat: p.lat,
-      lon: p.lon,
-      altitude: p.altitude ?? 0
-    }));
-
-    try {
-      const result = fitRoute(navDatabase, trackPoints, body.options);
-      return result;
-    } catch (err: any) {
-      return reply.code(500).send({
-        success: false,
-        error: err?.message || "拟合航路失败",
-        waypoints: [],
-        routeString: ""
-      });
-    }
+  /** 旧航迹拟合接口已退役，航线模式统一使用最短航路 */
+  app.post("/api/route/fit", async (_req, reply) => {
+    return reply.code(410).send({
+      success: false,
+      error: "航迹拟合功能已移除，请使用 /api/route/shortest",
+      waypoints: [],
+      routeString: "",
+      candidates: []
+    });
   });
 
   if (webDistPath) {
@@ -770,4 +789,3 @@ export function createServer({ db, favoritesDb, navDb, rootPath, webDistPath, in
 
   return app;
 }
-

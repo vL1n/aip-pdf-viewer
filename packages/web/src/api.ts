@@ -209,6 +209,55 @@ export async function apiRouteParse(route: string) {
   return await postJson<ParsedRoute>("/api/route/parse", { route });
 }
 
+// ---- Shortest Route (最短航路) ----
+
+export interface ShortestRouteOptions {
+  maxConnectorDistanceKm?: number;
+  connectorCandidateLimit?: number;
+}
+
+export interface ShortestRouteNavPoint {
+  ident: string;
+  name: string | null;
+  lat: number;
+  lon: number;
+  type: "airport" | "waypoint" | "navaid";
+}
+
+export interface ShortestRouteLeg {
+  from: string;
+  to: string;
+  distanceKm: number;
+  airwayUsed: boolean;
+  fallbackUsed: boolean;
+  airways: string[];
+  points: ParsedRoutePoint[];
+  reason: string | null;
+}
+
+export interface ShortestRouteResult {
+  success: boolean;
+  error: string | null;
+  routeString: string;
+  departure: ShortestRouteNavPoint | null;
+  arrival: ShortestRouteNavPoint | null;
+  points: ParsedRoutePoint[];
+  legs: ShortestRouteLeg[];
+  distanceKm: number;
+  fallbackUsed: boolean;
+  unknownElements: string[];
+  manuallyEdited?: boolean;
+}
+
+export async function apiRouteShortest(input: {
+  departure: string;
+  arrival: string;
+  via?: string[];
+  options?: ShortestRouteOptions;
+}) {
+  return await postJson<ShortestRouteResult>("/api/route/shortest", input);
+}
+
 // ---- VATSIM Tracking (VATSIM 追踪) ----
 
 /** VATSIM 飞行计划 */

@@ -1,10 +1,10 @@
 /**
  * 航线规划整合页面
- * 整合功能：航路解析、航路拟合、KML 导入、VATSIM 追踪、航图浏览
+ * 整合功能：航路解析、最短航路、KML 导入、VATSIM 追踪、航图浏览
  *
  * 页面结构：
  * - 顶栏：返回按钮 + VATSIM 追踪 + KML 导入
- * - 左侧 Tabs：总览（航路解析+航路拟合）、航图（机场选择+目录树）
+ * - 左侧 Tabs：总览（航路解析+最短航路）、航图（机场选择+目录树）
  * - 右侧预览：默认显示地图，选中航图时显示 PDF
  */
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
@@ -22,7 +22,6 @@ import {
   Tag,
   Empty,
   Typography,
-  Divider,
   theme
 } from "antd";
 import type { DataNode } from "antd/es/tree";
@@ -53,18 +52,22 @@ import {
   type RouteStatus,
   type VatsimPilot,
   type KmlParseResult,
-  type FitRouteResult,
-  type FittedWaypoint,
+  type ShortestRouteResult,
   type AirportRow,
   type TreeNode
 } from "../api";
 
 import { RouteParsePanel } from "./RouteParsePanel";
-import { RouteFitPanel } from "./RouteFitPanel";
+import { RouteShortestPanel } from "./RouteShortestPanel";
 import { VatsimTrackBar } from "./VatsimTrackBar";
 import { KmlUploadBar } from "./KmlUploadBar";
 import { PdfViewerPanel } from "./PdfViewerPanel";
 import { buildChartGroupTags, buildSidebarTreeData, type ChartGroupTag } from "../selectors/sidebar";
+import {
+  removeShortestRouteAirway,
+  removeShortestRoutePoint,
+  removeShortestRouteToken
+} from "../utils/routeEditing";
 
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
@@ -102,7 +105,6 @@ const airportIcon = createIcon("#e74c3c", 14);
 const waypointIcon = createIcon("#3498db", 8);
 const navaidIcon = createIcon("#9b59b6", 10);
 const explicitWaypointIcon = createIcon("#2ecc71", 10);
-const fittedWaypointIcon = createIcon("#27ae60", 10);
 
 // 创建飞机图标（带朝向）
 const createAircraftIcon = (heading: number) => {
@@ -131,12 +133,6 @@ function getMarkerIcon(point: ParsedRoutePoint) {
   if (point.type === "navaid") return navaidIcon;
   if (point.isExplicit) return explicitWaypointIcon;
   return waypointIcon;
-}
-
-function getFittedMarkerIcon(wp: FittedWaypoint) {
-  if (wp.isAirport) return airportIcon;
-  if (wp.type === "navaid") return navaidIcon;
-  return fittedWaypointIcon;
 }
 
 /** 自动调整地图视野的组件 */
@@ -220,8 +216,7 @@ export function RouteIntegratedPage({
 
   // KML 导入状态
   const [kmlResult, setKmlResult] = useState<KmlParseResult | null>(null);
-  const [fitResult, setFitResult] = useState<FitRouteResult | null>(null);
-  const [selectedCandidateIndex, setSelectedCandidateIndex] = useState(0);
+  const [shortestResult, setShortestResult] = useState<ShortestRouteResult | null>(null);
 
   // VATSIM 追踪状态
   const [vatsimPilot, setVatsimPilot] = useState<VatsimPilot | null>(null);
@@ -388,25 +383,34 @@ export function RouteIntegratedPage({
   // 处理 KML 解析成功
   const handleKmlParsed = useCallback((result: KmlParseResult) => {
     setKmlResult(result);
-    setFitResult(null);
     setFitBoundsTrigger((v) => v + 1);
   }, []);
 
-  const handleRouteFitted = useCallback((result: FitRouteResult) => {
-    setFitResult(result);
-    setSelectedCandidateIndex(0);
+  const handleShortestCalculated = useCallback((result: ShortestRouteResult) => {
+    setShortestResult(result);
     setFitBoundsTrigger((v) => v + 1);
   }, []);
 
   const handleKmlClear = useCallback(() => {
     setKmlResult(null);
-    setFitResult(null);
-    setSelectedCandidateIndex(0);
   }, []);
 
-  const handleFitClear = useCallback(() => {
-    setFitResult(null);
-    setSelectedCandidateIndex(0);
+  const handleShortestClear = useCallback(() => {
+    setShortestResult(null);
+  }, []);
+
+  const handleRemoveShortestPoint = useCallback((pointIndex: number) => {
+    setShortestResult((prev) => (prev ? removeShortestRoutePoint(prev, pointIndex) : prev));
+    setFitBoundsTrigger((v) => v + 1);
+  }, []);
+
+  const handleRemoveShortestAirway = useCallback((airway: string) => {
+    setShortestResult((prev) => (prev ? removeShortestRouteAirway(prev, airway) : prev));
+    setFitBoundsTrigger((v) => v + 1);
+  }, []);
+
+  const handleRemoveShortestRouteToken = useCallback((tokenIndex: number) => {
+    setShortestResult((prev) => (prev ? removeShortestRouteToken(prev, tokenIndex) : prev));
   }, []);
 
   // 处理 VATSIM 导入航路
@@ -419,23 +423,6 @@ export function RouteIntegratedPage({
     setVatsimCenterTrigger((v) => v + 1);
   }, []);
 
-  // 获取当前选中的候选结果
-  const selectedCandidate = useMemo(() => {
-    if (!fitResult?.candidates || fitResult.candidates.length === 0) {
-      // 向后兼容：如果没有 candidates 但有 waypoints，使用 waypoints
-      if (fitResult?.waypoints && fitResult.waypoints.length > 0) {
-        return {
-          score: 0,
-          waypoints: fitResult.waypoints,
-          routeString: fitResult.routeString,
-          segments: []
-        };
-      }
-      return null;
-    }
-    return fitResult.candidates[selectedCandidateIndex] || fitResult.candidates[0];
-  }, [fitResult, selectedCandidateIndex]);
-
   // 收集所有地图数据点
   const getAllMapPoints = useCallback((): Array<{ lat: number; lon: number }> => {
     const points: Array<{ lat: number; lon: number }> = [];
@@ -445,11 +432,11 @@ export function RouteIntegratedPage({
     if (kmlResult) {
       points.push(...kmlResult.points.map((p) => ({ lat: p.lat, lon: p.lon })));
     }
-    if (selectedCandidate) {
-      points.push(...selectedCandidate.waypoints.map((wp) => ({ lat: wp.lat, lon: wp.lon })));
+    if (shortestResult) {
+      points.push(...shortestResult.points.map((point) => ({ lat: point.lat, lon: point.lon })));
     }
     return points;
-  }, [parseResult, kmlResult, selectedCandidate]);
+  }, [parseResult, kmlResult, shortestResult]);
 
   // PDF 链接
   const pdfHref = openedFileId ? pdfUrl(openedFileId) : null;
@@ -477,14 +464,15 @@ export function RouteIntegratedPage({
         departureIcao={departureIcao}
         arrivalIcao={arrivalIcao}
       />
-      <Divider style={{ margin: "8px 0" }} />
-      <RouteFitPanel
-        kmlResult={kmlResult}
-        fitResult={fitResult}
-        onRouteFitted={handleRouteFitted}
-        onClear={handleFitClear}
-        selectedCandidateIndex={selectedCandidateIndex}
-        onCandidateIndexChange={setSelectedCandidateIndex}
+      <RouteShortestPanel
+        departureIcao={departureIcao}
+        arrivalIcao={arrivalIcao}
+        result={shortestResult}
+        onCalculated={handleShortestCalculated}
+        onClear={handleShortestClear}
+        onRemoveAirway={handleRemoveShortestAirway}
+        onRemovePoint={handleRemoveShortestPoint}
+        onRemoveRouteToken={handleRemoveShortestRouteToken}
       />
     </div>
   );
@@ -665,30 +653,37 @@ export function RouteIntegratedPage({
         />
       )}
 
-      {/* 拟合航路（使用选中的候选结果） */}
-      {selectedCandidate && selectedCandidate.waypoints.length > 0 && (
+      {/* 最短航路 */}
+      {shortestResult && shortestResult.points.length > 0 && (
         <>
           <Polyline
-            positions={selectedCandidate.waypoints.map((wp) => [wp.lat, wp.lon])}
+            positions={shortestResult.points.map((point) => [point.lat, point.lon])}
             pathOptions={{ color: "#16a085", weight: 3, opacity: 0.8 }}
           />
-          {selectedCandidate.waypoints.map((wp, idx) => (
-            <Marker key={`fit-${wp.ident}-${idx}`} position={[wp.lat, wp.lon]} icon={getFittedMarkerIcon(wp)}>
-              <Tooltip permanent={wp.isAirport} direction="top" offset={[0, -10]}>
-                <strong>{wp.ident}</strong>
-                {wp.viaAirway && <span style={{ marginLeft: 4, opacity: 0.7 }}>via {wp.viaAirway}</span>}
+          {shortestResult.points.map((point, idx) => (
+            <Marker key={`shortest-${point.ident}-${idx}`} position={[point.lat, point.lon]} icon={getMarkerIcon(point)}>
+              <Tooltip permanent={point.isAirport || point.isExplicit} direction="top" offset={[0, -10]}>
+                <strong>{point.ident}</strong>
+                {point.viaAirway && <span style={{ marginLeft: 4, opacity: 0.7 }}>via {point.viaAirway}</span>}
               </Tooltip>
               <Popup>
                 <div>
-                  <strong>{wp.ident}</strong>
-                  {wp.name && <div style={{ color: "#666" }}>{wp.name}</div>}
+                  <strong>{point.ident}</strong>
+                  {point.name && <div style={{ color: "#666" }}>{point.name}</div>}
                   <div style={{ fontSize: 12, color: "#999" }}>
-                    {wp.lat.toFixed(4)}°N, {wp.lon.toFixed(4)}°E
+                    {point.lat.toFixed(4)}°N, {point.lon.toFixed(4)}°E
                   </div>
-                  <div style={{ fontSize: 12, color: "#999" }}>
-                    距航迹: {wp.distanceFromTrack.toFixed(1)} km
-                  </div>
-                  {wp.viaAirway && <div style={{ color: "#52c41a" }}>经由航路: {wp.viaAirway}</div>}
+                  {point.remark && <div style={{ marginTop: 4, color: "#1890ff" }}>{point.remark}</div>}
+                  {point.viaAirway && <div style={{ color: "#52c41a" }}>经由航路: {point.viaAirway}</div>}
+                  <Button
+                    danger
+                    size="small"
+                    type="link"
+                    onClick={() => handleRemoveShortestPoint(idx)}
+                    style={{ padding: 0, marginTop: 6 }}
+                  >
+                    删除该生成航点
+                  </Button>
                 </div>
               </Popup>
             </Marker>
@@ -890,7 +885,7 @@ export function RouteIntegratedPage({
                         <Space><div style={{ width: 14, height: 14, background: "#9b59b6", borderRadius: "50%" }} /><span>VOR/NDB</span></Space>
                         <Space><div style={{ width: 30, height: 3, background: "#3498db" }} /><span>解析航路</span></Space>
                         <Space><div style={{ width: 30, height: 2, background: "#8e44ad", borderTop: "2px dashed #8e44ad" }} /><span>KML 航迹</span></Space>
-                        <Space><div style={{ width: 30, height: 3, background: "#16a085" }} /><span>拟合航路</span></Space>
+                        <Space><div style={{ width: 30, height: 3, background: "#16a085" }} /><span>最短航路</span></Space>
                       </Space>
                     </div>
                   ) : (

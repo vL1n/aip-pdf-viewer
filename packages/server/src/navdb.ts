@@ -31,6 +31,19 @@ export interface AirwayLeg {
   isEnd: boolean;
 }
 
+/** 带数据库 ID 的航点 */
+export interface NavPointWithId extends NavPoint {
+  id: number;
+}
+
+/** 航路图边 */
+export interface AirwayGraphEdge {
+  airwayId: number;
+  airwayIdent: string;
+  from: NavPointWithId;
+  to: NavPointWithId;
+}
+
 
 /**
  * 导航数据库查询类
@@ -227,6 +240,83 @@ export class NavDatabase {
       lon: row.Longtitude,
       type: "waypoint"
     };
+  }
+
+  /** 通过标识符查询航点并保留数据库 ID */
+  findWaypointCandidates(ident: string): NavPointWithId[] {
+    const rows = this.db
+      .prepare(`SELECT ID, Ident, Name, Latitude, Longtitude FROM Waypoints WHERE Ident = ? COLLATE NOCASE`)
+      .all(ident.toUpperCase()) as Array<{ ID: number; Ident: string; Name: string; Latitude: number; Longtitude: number }>;
+
+    return rows.map((row) => ({
+      id: row.ID,
+      ident: row.Ident,
+      name: row.Name,
+      lat: row.Latitude,
+      lon: row.Longtitude,
+      type: "waypoint" as const
+    }));
+  }
+
+  /** 读取全量航路图边，用于最短航路计算 */
+  getAirwayGraphEdges(): AirwayGraphEdge[] {
+    const rows = this.db
+      .prepare(
+        `
+          SELECT
+            l.AirwayID,
+            a.Ident AS AirwayIdent,
+            w1.ID AS FromID,
+            w1.Ident AS FromIdent,
+            w1.Name AS FromName,
+            w1.Latitude AS FromLatitude,
+            w1.Longtitude AS FromLongtitude,
+            w2.ID AS ToID,
+            w2.Ident AS ToIdent,
+            w2.Name AS ToName,
+            w2.Latitude AS ToLatitude,
+            w2.Longtitude AS ToLongtitude
+          FROM AirwayLegs l
+          JOIN Airways a ON a.ID = l.AirwayID
+          JOIN Waypoints w1 ON w1.ID = l.Waypoint1ID
+          JOIN Waypoints w2 ON w2.ID = l.Waypoint2ID
+        `
+      )
+      .all() as Array<{
+      AirwayID: number;
+      AirwayIdent: string;
+      FromID: number;
+      FromIdent: string;
+      FromName: string | null;
+      FromLatitude: number;
+      FromLongtitude: number;
+      ToID: number;
+      ToIdent: string;
+      ToName: string | null;
+      ToLatitude: number;
+      ToLongtitude: number;
+    }>;
+
+    return rows.map((row) => ({
+      airwayId: row.AirwayID,
+      airwayIdent: row.AirwayIdent,
+      from: {
+        id: row.FromID,
+        ident: row.FromIdent,
+        name: row.FromName,
+        lat: row.FromLatitude,
+        lon: row.FromLongtitude,
+        type: "waypoint" as const
+      },
+      to: {
+        id: row.ToID,
+        ident: row.ToIdent,
+        name: row.ToName,
+        lat: row.ToLatitude,
+        lon: row.ToLongtitude,
+        type: "waypoint" as const
+      }
+    }));
   }
 
   /**
