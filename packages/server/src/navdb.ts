@@ -44,6 +44,13 @@ export interface AirwayGraphEdge {
   to: NavPointWithId;
 }
 
+/** 半径搜索到的高空航路点 */
+export interface HighAirwayWaypoint extends NavPointWithId {
+  distanceNm: number;
+  airways: string[];
+  levels: string[];
+}
+
 
 /**
  * 导航数据库查询类
@@ -317,6 +324,88 @@ export class NavDatabase {
         type: "waypoint" as const
       }
     }));
+  }
+
+  /** 查询指定范围内的高空航路点。Level=H 或 B 都视为高空可用。 */
+  findHighAirwayWaypointsNear(lat: number, lon: number, radiusNm: number, limit: number = 200): HighAirwayWaypoint[] {
+    const radiusKm = radiusNm * 1.852;
+    const degRange = radiusKm / 111 * 1.25;
+    const latMin = lat - degRange;
+    const latMax = lat + degRange;
+    const lonDegRange = degRange / Math.max(Math.cos(lat * Math.PI / 180), 0.2);
+    const lonMin = lon - lonDegRange;
+    const lonMax = lon + lonDegRange;
+
+    const rows = this.db
+      .prepare(
+        `
+          WITH high_legs AS (
+            SELECT AirwayID, Level, Waypoint1ID AS WaypointID
+            FROM AirwayLegs
+            WHERE Level IN ('H', 'B') AND Waypoint1ID IS NOT NULL
+            UNION ALL
+            SELECT AirwayID, Level, Waypoint2ID AS WaypointID
+            FROM AirwayLegs
+            WHERE Level IN ('H', 'B') AND Waypoint2ID IS NOT NULL
+          )
+          SELECT
+            w.ID,
+            w.Ident,
+            w.Name,
+            w.Latitude,
+            w.Longtitude,
+            a.Ident AS AirwayIdent,
+            h.Level
+          FROM high_legs h
+          JOIN Airways a ON a.ID = h.AirwayID
+          JOIN Waypoints w ON w.ID = h.WaypointID
+          WHERE w.Latitude BETWEEN ? AND ?
+            AND w.Longtitude BETWEEN ? AND ?
+        `
+      )
+      .all(latMin, latMax, lonMin, lonMax) as Array<{
+      ID: number;
+      Ident: string;
+      Name: string | null;
+      Latitude: number;
+      Longtitude: number;
+      AirwayIdent: string;
+      Level: string;
+    }>;
+
+    const byId = new Map<number, HighAirwayWaypoint>();
+    for (const row of rows) {
+      const distanceNm = this.haversineDistance(lat, lon, row.Latitude, row.Longtitude) / 1.852;
+      if (distanceNm > radiusNm) continue;
+
+      const existing = byId.get(row.ID);
+      if (existing) {
+        if (!existing.airways.includes(row.AirwayIdent)) existing.airways.push(row.AirwayIdent);
+        if (!existing.levels.includes(row.Level)) existing.levels.push(row.Level);
+        continue;
+      }
+
+      byId.set(row.ID, {
+        id: row.ID,
+        ident: row.Ident,
+        name: row.Name,
+        lat: row.Latitude,
+        lon: row.Longtitude,
+        type: "waypoint",
+        distanceNm,
+        airways: [row.AirwayIdent],
+        levels: [row.Level]
+      });
+    }
+
+    return [...byId.values()]
+      .sort((a, b) => a.distanceNm - b.distanceNm || a.ident.localeCompare(b.ident, "en"))
+      .slice(0, limit)
+      .map((point) => ({
+        ...point,
+        airways: point.airways.sort((a, b) => a.localeCompare(b, "en")),
+        levels: point.levels.sort((a, b) => a.localeCompare(b, "en"))
+      }));
   }
 
   /**

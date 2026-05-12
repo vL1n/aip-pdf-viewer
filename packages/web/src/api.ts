@@ -258,6 +258,34 @@ export async function apiRouteShortest(input: {
   return await postJson<ShortestRouteResult>("/api/route/shortest", input);
 }
 
+export interface HighAirwayWaypoint {
+  id: number;
+  ident: string;
+  name: string | null;
+  lat: number;
+  lon: number;
+  type: "waypoint";
+  distanceNm: number;
+  airways: string[];
+  levels: string[];
+}
+
+export async function apiRouteHighWaypoints(input: { lat: number; lon: number; radiusNm: number; limit?: number }) {
+  const qs = new URLSearchParams({
+    lat: String(input.lat),
+    lon: String(input.lon),
+    radiusNm: String(input.radiusNm),
+    limit: String(input.limit ?? 200)
+  });
+  return await getJson<{
+    success: boolean;
+    error: string | null;
+    center: { lat: number; lon: number };
+    radiusNm: number;
+    waypoints: HighAirwayWaypoint[];
+  }>(`/api/route/high-waypoints?${qs.toString()}`);
+}
+
 // ---- VATSIM Tracking (VATSIM 追踪) ----
 
 /** VATSIM 飞行计划 */

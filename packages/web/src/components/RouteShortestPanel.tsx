@@ -11,6 +11,8 @@ import { splitRouteTokens } from "../utils/routeEditing";
 export interface RouteShortestPanelProps {
   departureIcao: string;
   arrivalIcao: string;
+  viaInput: string;
+  onViaInputChange: (value: string) => void;
   result: ShortestRouteResult | null;
   onCalculated: (result: ShortestRouteResult) => void;
   onClear: () => void;
@@ -41,6 +43,8 @@ function looksLikeAirway(token: string) {
 export function RouteShortestPanel({
   departureIcao,
   arrivalIcao,
+  viaInput,
+  onViaInputChange,
   result,
   onCalculated,
   onClear,
@@ -50,9 +54,9 @@ export function RouteShortestPanel({
   disabled = false
 }: RouteShortestPanelProps) {
   const { token } = theme.useToken();
-  const [viaInput, setViaInput] = useState("");
   const [calculating, setCalculating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [draggingViaIndex, setDraggingViaIndex] = useState<number | null>(null);
 
   const viaPoints = useMemo(() => parseViaInput(viaInput), [viaInput]);
   const routeTokens = useMemo(() => splitRouteTokens(result?.routeString ?? ""), [result?.routeString]);
@@ -95,6 +99,26 @@ export function RouteShortestPanel({
     setError(null);
     onClear();
   }, [onClear]);
+
+  const handleRemoveViaPoint = useCallback((pointIndex: number) => {
+    onViaInputChange(viaPoints.filter((_, idx) => idx !== pointIndex).join(" "));
+  }, [onViaInputChange, viaPoints]);
+
+  const handleDropViaPoint = useCallback((targetIndex: number, e: React.DragEvent) => {
+    e.preventDefault();
+    const rawIndex = e.dataTransfer.getData("text/plain");
+    const sourceIndex = draggingViaIndex ?? Number(rawIndex);
+    setDraggingViaIndex(null);
+    if (!Number.isInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= viaPoints.length || sourceIndex === targetIndex) {
+      return;
+    }
+
+    const next = [...viaPoints];
+    const [moved] = next.splice(sourceIndex, 1);
+    if (!moved) return;
+    next.splice(targetIndex, 0, moved);
+    onViaInputChange(next.join(" "));
+  }, [draggingViaIndex, onViaInputChange, viaPoints]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -150,12 +174,67 @@ export function RouteShortestPanel({
         <Input.TextArea
           placeholder="途径点，可选；用空格或逗号分隔，例如：PIMOL VMB BTO"
           value={viaInput}
-          onChange={(e) => setViaInput(e.target.value)}
+          onChange={(e) => onViaInputChange(e.target.value)}
           onKeyDown={handleKeyDown}
           disabled={calculating || disabled}
           autoSize={{ minRows: 2, maxRows: 4 }}
           style={{ marginBottom: 10, borderRadius: token.borderRadiusLG }}
         />
+
+        {viaPoints.length > 0 && (
+          <div
+            style={{
+              marginBottom: 12,
+              padding: 10,
+              borderRadius: token.borderRadiusLG,
+              background: token.colorFillQuaternary,
+              border: `1px dashed ${token.colorBorder}`
+            }}
+          >
+            <Space style={{ width: "100%", justifyContent: "space-between", marginBottom: 8 }}>
+              <Typography.Text strong>途径点排序</Typography.Text>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                拖动调整顺序
+              </Typography.Text>
+            </Space>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {viaPoints.map((point, idx) => (
+                <Tag
+                  key={`${point}-${idx}`}
+                  draggable={!disabled}
+                  closable={!disabled}
+                  color="geekblue"
+                  onClose={(e) => {
+                    e.preventDefault();
+                    handleRemoveViaPoint(idx);
+                  }}
+                  onDragStart={(e) => {
+                    setDraggingViaIndex(idx);
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setData("text/plain", String(idx));
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                  }}
+                  onDrop={(e) => handleDropViaPoint(idx, e)}
+                  onDragEnd={() => setDraggingViaIndex(null)}
+                  style={{
+                    margin: 0,
+                    padding: "5px 10px",
+                    borderRadius: 999,
+                    cursor: disabled ? "default" : "grab",
+                    opacity: draggingViaIndex === idx ? 0.45 : 1,
+                    boxShadow: draggingViaIndex === idx ? "none" : "0 2px 8px rgba(15, 23, 42, 0.08)"
+                  }}
+                >
+                  <span style={{ opacity: 0.65, marginRight: 6 }}>#{idx + 1}</span>
+                  {point}
+                </Tag>
+              ))}
+            </div>
+          </div>
+        )}
 
         <Space wrap>
           <Button

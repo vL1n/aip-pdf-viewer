@@ -733,6 +733,47 @@ export function createServer({ db, favoritesDb, navDb, rootPath, webDistPath, in
     }
   });
 
+  /** 查询地图点附近的高空航路点 */
+  app.get("/api/route/high-waypoints", async (req, reply) => {
+    if (!navDatabase) {
+      return reply.code(503).send({
+        success: false,
+        error: "导航数据库不可用（未找到 nd.db3）",
+        waypoints: []
+      });
+    }
+
+    const q = req.query as { lat?: string; lon?: string; radiusNm?: string; limit?: string };
+    const lat = Number(q.lat);
+    const lon = Number(q.lon);
+    const radiusNm = Math.max(5, Math.min(200, Number(q.radiusNm) || 30));
+    const limit = Math.max(1, Math.min(500, Number(q.limit) || 200));
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+      return reply.code(400).send({
+        success: false,
+        error: "请提供有效的 lat/lon",
+        waypoints: []
+      });
+    }
+
+    try {
+      return {
+        success: true,
+        error: null,
+        center: { lat, lon },
+        radiusNm,
+        waypoints: navDatabase.findHighAirwayWaypointsNear(lat, lon, radiusNm, limit)
+      };
+    } catch (err: any) {
+      return reply.code(500).send({
+        success: false,
+        error: err?.message || "查询高空航路点失败",
+        waypoints: []
+      });
+    }
+  });
+
   // ---- KML Parsing (KML 解析) ----
 
   /** 解析 KML 文件 */

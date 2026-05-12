@@ -22,6 +22,7 @@ import {
   Tag,
   Empty,
   Typography,
+  Slider,
   theme
 } from "antd";
 import type { DataNode } from "antd/es/tree";
@@ -33,9 +34,10 @@ import {
   FileTextOutlined,
   MenuOutlined,
   UnorderedListOutlined,
-  CloseOutlined
+  CloseOutlined,
+  PlusOutlined
 } from "@ant-design/icons";
-import { MapContainer, TileLayer, Marker, Polyline, Popup, Tooltip, useMap } from "react-leaflet";
+import { Circle, MapContainer, TileLayer, Marker, Polyline, Popup, Tooltip, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -46,12 +48,14 @@ import {
   apiFavoriteRelPaths,
   apiFavoriteAdd,
   apiFavoriteRemove,
+  apiRouteHighWaypoints,
   pdfUrl,
   type ParsedRoute,
   type ParsedRoutePoint,
   type RouteStatus,
   type VatsimPilot,
   type KmlParseResult,
+  type HighAirwayWaypoint,
   type ShortestRouteResult,
   type AirportRow,
   type TreeNode
@@ -105,6 +109,9 @@ const airportIcon = createIcon("#e74c3c", 14);
 const waypointIcon = createIcon("#3498db", 8);
 const navaidIcon = createIcon("#9b59b6", 10);
 const explicitWaypointIcon = createIcon("#2ecc71", 10);
+const highAirwayWaypointIcon = createIcon("#f59e0b", 9);
+const searchAnchorIcon = createIcon("#111827", 12);
+const NM_TO_METERS = 1852;
 
 // 创建飞机图标（带朝向）
 const createAircraftIcon = (heading: number) => {
@@ -178,6 +185,15 @@ function FollowAircraft({ pilot, enabled, centerTrigger }: { pilot: VatsimPilot 
   return null;
 }
 
+function MapRightClickSelector({ onSelect }: { onSelect: (point: { lat: number; lon: number }) => void }) {
+  useMapEvents({
+    contextmenu: (e) => {
+      onSelect({ lat: e.latlng.lat, lon: e.latlng.lng });
+    }
+  });
+  return null;
+}
+
 export interface RouteIntegratedPageProps {
   onBack: () => void;
   isDark: boolean;
@@ -217,6 +233,14 @@ export function RouteIntegratedPage({
   // KML 导入状态
   const [kmlResult, setKmlResult] = useState<KmlParseResult | null>(null);
   const [shortestResult, setShortestResult] = useState<ShortestRouteResult | null>(null);
+  const [shortestViaInput, setShortestViaInput] = useState("");
+
+  // 地图右键高空航路点搜索
+  const [airwaySearchAnchor, setAirwaySearchAnchor] = useState<{ lat: number; lon: number } | null>(null);
+  const [airwaySearchRadiusNm, setAirwaySearchRadiusNm] = useState(30);
+  const [airwaySearchPoints, setAirwaySearchPoints] = useState<HighAirwayWaypoint[]>([]);
+  const [airwaySearchLoading, setAirwaySearchLoading] = useState(false);
+  const [airwaySearchError, setAirwaySearchError] = useState<string | null>(null);
 
   // VATSIM 追踪状态
   const [vatsimPilot, setVatsimPilot] = useState<VatsimPilot | null>(null);
@@ -370,6 +394,50 @@ export function RouteIntegratedPage({
 
   const favoritesCount = useMemo(() => favoriteRelPaths.size, [favoriteRelPaths]);
 
+  useEffect(() => {
+    if (!airwaySearchAnchor) {
+      setAirwaySearchPoints([]);
+      setAirwaySearchError(null);
+      setAirwaySearchLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      (async () => {
+        try {
+          setAirwaySearchLoading(true);
+          setAirwaySearchError(null);
+          const res = await apiRouteHighWaypoints({
+            lat: airwaySearchAnchor.lat,
+            lon: airwaySearchAnchor.lon,
+            radiusNm: airwaySearchRadiusNm,
+            limit: 200
+          });
+          if (cancelled) return;
+          if (!res.success) {
+            setAirwaySearchError(res.error || "查询高空航路点失败");
+            setAirwaySearchPoints([]);
+            return;
+          }
+          setAirwaySearchPoints(res.waypoints ?? []);
+        } catch (e: any) {
+          if (!cancelled) {
+            setAirwaySearchError(e?.message || "查询高空航路点失败");
+            setAirwaySearchPoints([]);
+          }
+        } finally {
+          if (!cancelled) setAirwaySearchLoading(false);
+        }
+      })();
+    }, 220);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [airwaySearchAnchor, airwaySearchRadiusNm]);
+
   // 处理航路解析成功
   const handleParseSuccess = useCallback((result: ParsedRoute) => {
     setParseResult(result);
@@ -398,6 +466,18 @@ export function RouteIntegratedPage({
   const handleShortestClear = useCallback(() => {
     setShortestResult(null);
   }, []);
+
+  const handleAddViaWaypoint = useCallback((ident: string) => {
+    const normalized = ident.trim().toUpperCase();
+    if (!normalized) return;
+    setShortestViaInput((prev) => {
+      const tokens = prev.split(/[\s,，]+/).map((item) => item.trim().toUpperCase()).filter(Boolean);
+      if (tokens.includes(normalized)) return tokens.join(" ");
+      return [...tokens, normalized].join(" ");
+    });
+    setActiveTab("overview");
+    if (isMobile) setSiderCollapsed(false);
+  }, [isMobile]);
 
   const handleRemoveShortestPoint = useCallback((pointIndex: number) => {
     setShortestResult((prev) => (prev ? removeShortestRoutePoint(prev, pointIndex) : prev));
@@ -467,6 +547,8 @@ export function RouteIntegratedPage({
       <RouteShortestPanel
         departureIcao={departureIcao}
         arrivalIcao={arrivalIcao}
+        viaInput={shortestViaInput}
+        onViaInputChange={setShortestViaInput}
         result={shortestResult}
         onCalculated={handleShortestCalculated}
         onClear={handleShortestClear}
@@ -612,6 +694,65 @@ export function RouteIntegratedPage({
 
       <FitBounds points={getAllMapPoints()} trigger={fitBoundsTrigger} />
       <FollowAircraft pilot={vatsimPilot} enabled={!!vatsimPilot} centerTrigger={vatsimCenterTrigger} />
+      <MapRightClickSelector onSelect={setAirwaySearchAnchor} />
+
+      {/* 右键搜索高空航路点 */}
+      {airwaySearchAnchor && (
+        <>
+          <Circle
+            center={[airwaySearchAnchor.lat, airwaySearchAnchor.lon]}
+            radius={airwaySearchRadiusNm * NM_TO_METERS}
+            pathOptions={{ color: "#f59e0b", weight: 2, opacity: 0.9, fillColor: "#f59e0b", fillOpacity: 0.08 }}
+          />
+          <Marker position={[airwaySearchAnchor.lat, airwaySearchAnchor.lon]} icon={searchAnchorIcon} zIndexOffset={900}>
+            <Tooltip permanent direction="top" offset={[0, -10]}>
+              搜索中心 · {airwaySearchRadiusNm}NM
+            </Tooltip>
+          </Marker>
+          {airwaySearchPoints.map((point) => (
+            <Marker
+              key={`high-airway-${point.id}`}
+              position={[point.lat, point.lon]}
+              icon={highAirwayWaypointIcon}
+              zIndexOffset={800}
+            >
+              <Tooltip direction="top" offset={[0, -10]}>
+                <strong>{point.ident}</strong>
+                <span style={{ marginLeft: 4, opacity: 0.7 }}>{point.distanceNm.toFixed(1)}NM</span>
+              </Tooltip>
+              <Popup>
+                <div style={{ minWidth: 180 }}>
+                  <strong>{point.ident}</strong>
+                  {point.name && <div style={{ color: "#666" }}>{point.name}</div>}
+                  <div style={{ fontSize: 12, color: "#999" }}>
+                    {point.lat.toFixed(4)}°N, {point.lon.toFixed(4)}°E
+                  </div>
+                  <div style={{ marginTop: 4, fontSize: 12, color: "#666" }}>
+                    距搜索点 {point.distanceNm.toFixed(1)} NM
+                  </div>
+                  <div style={{ marginTop: 4 }}>
+                    {point.airways.slice(0, 8).map((airway) => (
+                      <Tag key={airway} color="cyan" style={{ marginBottom: 4 }}>
+                        {airway}
+                      </Tag>
+                    ))}
+                    {point.airways.length > 8 && <Tag>+{point.airways.length - 8}</Tag>}
+                  </div>
+                  <Button
+                    type="primary"
+                    size="small"
+                    icon={<PlusOutlined />}
+                    onClick={() => handleAddViaWaypoint(point.ident)}
+                    style={{ marginTop: 8 }}
+                  >
+                    作为途径点
+                  </Button>
+                </div>
+              </Popup>
+            </Marker>
+          ))}
+        </>
+      )}
 
       {/* VATSIM 飞机标记 */}
       {vatsimPilot && (
@@ -722,6 +863,98 @@ export function RouteIntegratedPage({
     </MapContainer>
   );
 
+  const renderAirwaySearchPanel = () => {
+    if (!airwaySearchAnchor) return null;
+
+    return (
+      <div
+      style={{
+        position: "absolute",
+        top: 14,
+        left: 14,
+        zIndex: 1000,
+        width: isMobile ? "calc(100% - 78px)" : 360,
+        maxWidth: "calc(100% - 28px)",
+        pointerEvents: "auto"
+      }}
+    >
+      <div
+        style={{
+          background: token.colorBgElevated,
+          border: `1px solid ${token.colorBorderSecondary}`,
+          borderRadius: token.borderRadiusLG,
+          boxShadow: "0 10px 30px rgba(15, 23, 42, 0.18)",
+          overflow: "hidden"
+        }}
+      >
+        <div
+          style={{
+            padding: "10px 12px",
+            background: `linear-gradient(135deg, rgba(245,158,11,0.16), ${token.colorBgElevated})`,
+            borderBottom: `1px solid ${token.colorBorderSecondary}`
+          }}
+        >
+          <Space align="start" style={{ width: "100%", justifyContent: "space-between" }}>
+            <div>
+              <Typography.Text strong>高空航路点查找</Typography.Text>
+              <Typography.Text type="secondary" style={{ display: "block", fontSize: 12 }}>
+                右键地图选择圆心，点击候选点可加入途径点
+              </Typography.Text>
+            </div>
+            <Button size="small" type="text" icon={<CloseOutlined />} onClick={() => setAirwaySearchAnchor(null)} />
+          </Space>
+        </div>
+
+        <div style={{ padding: 12 }}>
+          <Space size={6} wrap style={{ marginBottom: 8 }}>
+            <Tag color="gold">{airwaySearchRadiusNm} NM</Tag>
+            <Tag color={airwaySearchLoading ? "processing" : "blue"}>
+              {airwaySearchLoading ? "查询中" : `${airwaySearchPoints.length} 个点`}
+            </Tag>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {airwaySearchAnchor.lat.toFixed(3)}, {airwaySearchAnchor.lon.toFixed(3)}
+            </Typography.Text>
+          </Space>
+
+          <Slider
+            min={5}
+            max={120}
+            step={5}
+            value={airwaySearchRadiusNm}
+            onChange={setAirwaySearchRadiusNm}
+            tooltip={{ formatter: (value) => `${value} NM` }}
+            styles={{ track: { background: "#f59e0b" } }}
+          />
+
+          {airwaySearchError && (
+            <Alert type="error" showIcon message={airwaySearchError} style={{ marginBottom: 8 }} />
+          )}
+
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 154, overflowY: "auto" }}>
+            {airwaySearchPoints.slice(0, 30).map((point) => (
+              <Tag
+                key={`panel-high-airway-${point.id}`}
+                color="gold"
+                onClick={() => handleAddViaWaypoint(point.ident)}
+                style={{ margin: 0, padding: "4px 8px", borderRadius: 999, cursor: "pointer" }}
+              >
+                <PlusOutlined style={{ marginRight: 4 }} />
+                {point.ident}
+                <span style={{ marginLeft: 4, opacity: 0.75 }}>{point.distanceNm.toFixed(0)}NM</span>
+              </Tag>
+            ))}
+            {!airwaySearchLoading && airwaySearchPoints.length === 0 && (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                当前范围内没有高空航路点，可以放大半径再试。
+              </Typography.Text>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+    );
+  };
+
   return (
     <div style={{ height: windowHeight, display: "flex", flexDirection: "column", background: token.colorBgLayout }}>
       {/* 顶栏：工具区 */}
@@ -831,6 +1064,7 @@ export function RouteIntegratedPage({
             {openedFileId === null ? (
               <>
                 {renderMap()}
+                {renderAirwaySearchPanel()}
 
                 {/* 地图控制按钮 */}
                 <div
