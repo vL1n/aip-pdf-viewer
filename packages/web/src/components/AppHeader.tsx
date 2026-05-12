@@ -2,6 +2,7 @@ import React from "react";
 import { Button, Dropdown, Layout, Popconfirm, Select, Space, Tooltip, Typography } from "antd";
 import type { AirportRow } from "../api";
 import {
+  ArrowLeftOutlined,
   CheckOutlined,
   CloseOutlined,
   DeleteOutlined,
@@ -85,12 +86,25 @@ export function AppHeader(props: {
   } = props;
 
   const labelMap = new Map<string, string>();
-  for (const a of airports) labelMap.set(a.icao, `${a.icao}${a.name ? ` - ${a.name}` : ""}`);
+  for (const a of airports) {
+    const icao = String(a.icao ?? "").toUpperCase();
+    labelMap.set(icao, `${icao}${a.name ? ` - ${a.name}` : ""}`);
+  }
 
-  const airportOptions = selectedIcaos.map((icao) => ({
-    value: icao,
-    label: labelMap.get(icao) || icao
-  }));
+  const airportOptions = airports
+    .filter((airport) => Number(airport.fileCount ?? 0) > 0)
+    .map((airport) => {
+      const icao = String(airport.icao ?? "").toUpperCase();
+      return {
+        value: icao,
+        label: labelMap.get(icao) || icao
+      };
+    });
+  const filterAirportOption = (input: string, option?: { label?: React.ReactNode; value?: string }) => {
+    const keyword = input.trim().toUpperCase();
+    if (!keyword) return true;
+    return `${option?.value ?? ""} ${String(option?.label ?? "")}`.toUpperCase().includes(keyword);
+  };
   const isRouteMode = selectedIcaos.length === 2;
   const annotationModeOpen = annotationEnabled && annotationUi.toolsOpen;
   const compactAnnotationMode = compact && annotationModeOpen;
@@ -334,17 +348,35 @@ export function AppHeader(props: {
     </div>
   ) : null;
   const headerBrand = (
-    <Space size={12} align="center" style={{ minWidth: 0, overflow: "hidden" }}>
+    <Space size={12} align="center" style={{ minWidth: 0, overflow: "hidden", flex: "0 0 auto" }}>
       <Button
-        type="text"
-        aria-label={siderCollapsed ? "展开侧边栏" : "收起侧边栏"}
-        icon={siderCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-        onClick={onToggleSider}
+        icon={<ArrowLeftOutlined />}
+        onClick={onResetToSelection}
+      >
+        返回
+      </Button>
+      <div
+        aria-hidden="true"
+        style={{
+          width: 1,
+          height: 22,
+          background: borderColor,
+          flex: "0 0 auto"
+        }}
       />
       <Typography.Text strong ellipsis style={{ minWidth: 0 }}>
         Charts Viewer
       </Typography.Text>
     </Space>
+  );
+  const panelToggleButton = (
+    <Button
+      icon={siderCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+      onClick={onToggleSider}
+      aria-label={siderCollapsed ? "展开目录" : "收起目录"}
+    >
+      {compact ? "目录" : siderCollapsed ? "显示目录" : "隐藏目录"}
+    </Button>
   );
   const annotationToggleButton = annotationEnabled ? (
     <Tooltip title={annotationModeOpen ? "退出标注" : "进入标注"}>
@@ -358,6 +390,34 @@ export function AppHeader(props: {
       />
     </Tooltip>
   ) : null;
+  const compactMoreMenuItems = [
+    ...(openedFileId && pdfHref
+      ? [{ key: "open", icon: <FilePdfOutlined />, label: "新窗口打开", onClick: openPdfInNewWindow } as any]
+      : []),
+    { key: "theme", type: "group" as any, label: "主题", children: themeItems as any },
+    { key: "export", icon: <DownloadOutlined />, label: "导出收藏", onClick: onExportFavorites },
+    { key: "import", icon: <UploadOutlined />, label: "导入收藏", onClick: onTriggerImport }
+  ];
+  const renderAirportSwitcher = (style: React.CSSProperties) => (
+    isRouteMode ? (
+      <Typography.Text type="secondary" ellipsis style={style}>
+        当前：{labelMap.get(activeIcao) || activeIcao || "-"}
+      </Typography.Text>
+    ) : (
+      <Select
+        style={style}
+        value={activeIcao || undefined}
+        onChange={(v: string | undefined) => onActiveIcaoChange(v || "")}
+        disabled={!ready || airportOptions.length === 0}
+        showSearch
+        allowClear
+        optionFilterProp="label"
+        filterOption={filterAirportOption}
+        options={airportOptions}
+        placeholder="切换机场"
+      />
+    )
+  );
 
   return (
     <Layout.Header
@@ -384,17 +444,39 @@ export function AppHeader(props: {
           </div>
           {annotationBar}
         </div>
+      ) : compact ? (
+        <div className="appHeaderMobileLayout">
+          <div className="appHeaderMobileTop">
+            {headerBrand}
+            <Space size={8} align="center">
+              {annotationToggleButton}
+              <Dropdown trigger={["click"]} menu={{ items: compactMoreMenuItems }}>
+                <Button icon={<MoreOutlined />} aria-label="更多" />
+              </Dropdown>
+            </Space>
+          </div>
+          <div className="appHeaderMobileSwitcher">
+            <div style={{ display: "flex", gap: 8, width: "100%", minWidth: 0 }}>
+              <div style={{ flex: "1 1 auto", minWidth: 0 }}>
+                {renderAirportSwitcher({ width: "100%", minWidth: 0 })}
+              </div>
+              <div style={{ flex: "0 0 auto" }}>
+                {panelToggleButton}
+              </div>
+            </div>
+          </div>
+        </div>
       ) : (
-        <Space size={compact ? 8 : 12} align="center" style={{ width: "100%", justifyContent: "space-between", minWidth: 0 }}>
+        <Space size={12} align="center" style={{ width: "100%", justifyContent: "space-between", minWidth: 0 }}>
           {headerBrand}
 
           <Space
-            size={compact ? 8 : 12}
+            size={12}
             align="center"
             style={{
               minWidth: 0,
               justifyContent: "flex-end",
-              flexWrap: annotationModeOpen ? "nowrap" : compact ? "wrap" : "nowrap",
+              flexWrap: "nowrap",
               overflowX: annotationModeOpen ? "auto" : "visible"
             }}
           >
@@ -403,62 +485,25 @@ export function AppHeader(props: {
             ) : (
               <>
                 {/* 航线模式下（双机场）由侧边栏的“起/降机场”Tag 负责切换；顶部不再展示 Select */}
-                {isRouteMode ? (
-                  <Typography.Text type="secondary" ellipsis style={{ maxWidth: compact ? "70vw" : 320 }}>
-                    当前：{labelMap.get(activeIcao) || activeIcao || "-"}
-                  </Typography.Text>
-                ) : (
-                  <Select
-                    style={{
-                      width: compact ? 180 : 280,
-                      maxWidth: compact ? "60vw" : "35vw",
-                      flex: compact ? "1 1 180px" : "0 1 280px",
-                      minWidth: compact ? 140 : 200
-                    }}
-                    value={activeIcao || undefined}
-                    onChange={(v: string | undefined) => onActiveIcaoChange(v || "")}
-                    disabled={!ready || selectedIcaos.length === 0}
-                    showSearch
-                    allowClear
-                    optionFilterProp="label"
-                    options={airportOptions}
-                    placeholder="切换机场"
-                  />
-                )}
+                {renderAirportSwitcher({
+                  width: 280,
+                  maxWidth: "35vw",
+                  flex: "0 1 280px",
+                  minWidth: 200
+                })}
+                {panelToggleButton}
 
-                {compact ? (
-                  <Dropdown
-                    trigger={["click"]}
-                    menu={{
-                      items: [
-                        ...(openedFileId && pdfHref
-                          ? [{ key: "open", icon: <FilePdfOutlined />, label: "新窗口打开", onClick: openPdfInNewWindow } as any]
-                          : []),
-                        { key: "theme", type: "group" as any, label: "主题", children: themeItems as any },
-                        { key: "reset", label: "重新选择", onClick: onResetToSelection },
-                        { key: "export", icon: <DownloadOutlined />, label: "导出收藏", onClick: onExportFavorites },
-                        { key: "import", icon: <UploadOutlined />, label: "导入收藏", onClick: onTriggerImport }
-                      ]
-                    }}
-                  >
-                    <Button icon={<MoreOutlined />} aria-label="更多" />
-                  </Dropdown>
-                ) : (
-                  <>
-                    <Button onClick={onResetToSelection}>重新选择</Button>
-                    <Dropdown trigger={["click"]} menu={{ items: [{ key: "theme", type: "group" as any, label: "主题", children: themeItems as any }] }}>
-                      <Button>主题</Button>
-                    </Dropdown>
-                    <Button icon={<DownloadOutlined />} onClick={onExportFavorites}>
-                      导出收藏
-                    </Button>
-                    <Button icon={<UploadOutlined />} onClick={onTriggerImport}>
-                      导入收藏
-                    </Button>
-                  </>
-                )}
+                <Dropdown trigger={["click"]} menu={{ items: [{ key: "theme", type: "group" as any, label: "主题", children: themeItems as any }] }}>
+                  <Button>主题</Button>
+                </Dropdown>
+                <Button icon={<DownloadOutlined />} onClick={onExportFavorites}>
+                  导出收藏
+                </Button>
+                <Button icon={<UploadOutlined />} onClick={onTriggerImport}>
+                  导入收藏
+                </Button>
 
-                {!compact && openedFileId && pdfHref ? (
+                {openedFileId && pdfHref ? (
                   <Tooltip title="新窗口打开">
                     <Button
                       icon={<FilePdfOutlined />}

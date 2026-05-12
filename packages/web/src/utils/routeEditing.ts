@@ -8,6 +8,21 @@ export function splitRouteTokens(routeString: string) {
     .filter(Boolean);
 }
 
+function looksLikeAirwayToken(token: string) {
+  return /^[A-Z]{1,4}\d+[A-Z]?$/.test(token.toUpperCase());
+}
+
+function collectAirwayTokens(result: ShortestRouteResult) {
+  const airways = new Set<string>();
+  for (const point of result.points) {
+    if (point.viaAirway) airways.add(point.viaAirway.toUpperCase());
+  }
+  for (const leg of result.legs) {
+    for (const airway of leg.airways) airways.add(airway.toUpperCase());
+  }
+  return airways;
+}
+
 function haversineDistanceKm(a: { lat: number; lon: number }, b: { lat: number; lon: number }) {
   const radiusKm = 6371;
   const dLat = ((b.lat - a.lat) * Math.PI) / 180;
@@ -98,4 +113,40 @@ export function removeShortestRouteAirway(result: ShortestRouteResult, airway: s
 
   const tokens = splitRouteTokens(result.routeString).filter((token) => token.toUpperCase() !== normalized);
   return rebuildEditedResult(result, points, tokens.join(" "));
+}
+
+export function simplifyShortestRouteAirways(result: ShortestRouteResult) {
+  const sourceRouteString = result.routeString || buildRouteStringFromPoints(result.points);
+  const tokens = splitRouteTokens(sourceRouteString);
+  if (tokens.length < 3) return result;
+
+  const knownAirways = collectAirwayTokens(result);
+  const isAirway = (token: string) => {
+    const upper = token.toUpperCase();
+    return knownAirways.has(upper) || looksLikeAirwayToken(upper);
+  };
+
+  const simplified = [...tokens];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let idx = 0; idx <= simplified.length - 3; idx += 1) {
+      const airway = simplified[idx]!.toUpperCase();
+      const middle = simplified[idx + 1]!.toUpperCase();
+      const repeatedAirway = simplified[idx + 2]!.toUpperCase();
+      if (
+        airway === repeatedAirway &&
+        isAirway(airway) &&
+        middle !== "DCT" &&
+        !isAirway(middle)
+      ) {
+        simplified.splice(idx + 1, 2);
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  const nextRouteString = simplified.join(" ");
+  return nextRouteString === sourceRouteString.trim() ? result : rebuildEditedResult(result, result.points, nextRouteString);
 }

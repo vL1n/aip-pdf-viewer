@@ -91,6 +91,20 @@ body {
   background: rgba(22, 119, 255, 0.08);
 }
 
+.routeMapCanvas,
+.routeMapCanvas * {
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.routeMapCanvas img,
+.routeMapCanvas .leaflet-tile,
+.routeMapCanvas .leaflet-marker-icon {
+  -webkit-user-drag: none;
+}
+
 .appHeaderAnnotationBar {
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
@@ -113,6 +127,32 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.appHeaderMobileLayout {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.appHeaderMobileTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.appHeaderMobileTop > :first-child {
+  flex: 1 1 auto;
+}
+
+.appHeaderMobileSwitcher {
   width: 100%;
   min-width: 0;
 }

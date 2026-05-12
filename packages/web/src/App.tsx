@@ -1,5 +1,5 @@
 /* @refresh reset */
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWindowHeight } from "./hooks/useWindowHeight";
 
 import {
@@ -10,8 +10,10 @@ import {
   apiFavoritesExport,
   apiFavoritesImport,
   apiIndexStatus,
+  apiRouteAirports,
   apiTree,
   pdfUrl,
+  type AirportRow,
   type IndexStatus,
   type TreeNode
 } from "./api";
@@ -38,6 +40,56 @@ import { RouteIntegratedPage } from "./components/RouteIntegratedPage";
 import { buildChartGroupTags, buildSidebarTreeData } from "./selectors/sidebar";
 import type { ThemeMode } from "./hooks/useThemeMode";
 
+type AppRoute =
+  | { mode: "home" }
+  | { mode: "charts"; icao: string; fileId: number | null }
+  | { mode: "route"; departure: string; arrival: string };
+
+function normalizeIcao(value: string | null | undefined) {
+  return String(value ?? "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
+}
+
+function parseAppRoute(): AppRoute {
+  const url = new URL(window.location.href);
+  const parts = url.pathname.split("/").filter(Boolean);
+
+  if (parts[0] === "charts") {
+    const icao = normalizeIcao(parts[1] || url.searchParams.get("icao"));
+    const fileId = Number(url.searchParams.get("file") || url.searchParams.get("fileId") || "");
+    return icao ? { mode: "charts", icao, fileId: Number.isFinite(fileId) && fileId > 0 ? fileId : null } : { mode: "home" };
+  }
+
+  if (parts[0] === "route") {
+    const departure = normalizeIcao(parts[1] || url.searchParams.get("dep") || url.searchParams.get("departure"));
+    const arrival = normalizeIcao(parts[2] || url.searchParams.get("arr") || url.searchParams.get("arrival"));
+    return departure && arrival ? { mode: "route", departure, arrival } : { mode: "home" };
+  }
+
+  const queryIcao = normalizeIcao(url.searchParams.get("icao"));
+  if (queryIcao) {
+    const fileId = Number(url.searchParams.get("file") || url.searchParams.get("fileId") || "");
+    return { mode: "charts", icao: queryIcao, fileId: Number.isFinite(fileId) && fileId > 0 ? fileId : null };
+  }
+
+  const departure = normalizeIcao(url.searchParams.get("dep") || url.searchParams.get("departure"));
+  const arrival = normalizeIcao(url.searchParams.get("arr") || url.searchParams.get("arrival"));
+  if (departure && arrival) return { mode: "route", departure, arrival };
+
+  return { mode: "home" };
+}
+
+function chartPath(icao: string, fileId?: number | null) {
+  const normalized = normalizeIcao(icao);
+  const qs = fileId ? `?file=${encodeURIComponent(String(fileId))}` : "";
+  return normalized ? `/charts/${encodeURIComponent(normalized)}${qs}` : "/";
+}
+
+function routePath(departure: string, arrival: string) {
+  const dep = normalizeIcao(departure);
+  const arr = normalizeIcao(arrival);
+  return dep && arr ? `/route/${encodeURIComponent(dep)}/${encodeURIComponent(arr)}` : "/";
+}
+
 export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeMode) => void; isDark: boolean }) {
   const { themeMode, onThemeModeChange, isDark } = props;
   const screens = Grid.useBreakpoint();
@@ -51,7 +103,8 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
   const ready = indexStatus?.phase === "ready";
   const [apiConnectError, setApiConnectError] = useState<string | null>(null);
 
-  const [airports, setAirports] = useState<any[]>([]);
+  const [airports, setAirports] = useState<AirportRow[]>([]);
+  const [routeAirports, setRouteAirports] = useState<AirportRow[]>([]);
   const [airportsLoading, setAirportsLoading] = useState(true);
   const [airportsError, setAirportsError] = useState<string | null>(null);
 
@@ -93,10 +146,73 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
   const [favoriteRelPaths, setFavoriteRelPaths] = useState<Set<string>>(new Set());
   const [favoritesLoading, setFavoritesLoading] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const applyingBrowserRouteRef = useRef(false);
 
   const windowHeight = useWindowHeight();
   const { token } = theme.useToken();
   const pdfHref = openedFileId ? pdfUrl(openedFileId) : null;
+
+  const applyRouteState = useCallback((route: AppRoute) => {
+    applyingBrowserRouteRef.current = true;
+    if (route.mode === "charts") {
+      setShowRoutePlanning(false);
+      setRouteDepartureIcao("");
+      setRouteArrivalIcao("");
+      setDraftViewIcao(route.icao);
+      setSelectedIcaos([route.icao]);
+      setActiveIcao(route.icao);
+      setOpenedFileId(route.fileId);
+    } else if (route.mode === "route") {
+      setShowRoutePlanning(true);
+      setRouteDepartureIcao(route.departure);
+      setRouteArrivalIcao(route.arrival);
+      setSelectedIcaos([]);
+      setActiveIcao("");
+      setOpenedFileId(null);
+    } else {
+      setShowRoutePlanning(false);
+      setDraftViewIcao("");
+      setSelectedIcaos([]);
+      setActiveIcao("");
+      setOpenedFileId(null);
+    }
+    window.setTimeout(() => {
+      applyingBrowserRouteRef.current = false;
+    }, 0);
+  }, []);
+
+  const pushUrl = useCallback((path: string) => {
+    if (`${window.location.pathname}${window.location.search}` !== path) {
+      window.history.pushState(null, "", path);
+    }
+  }, []);
+
+  const navigateHome = useCallback(() => {
+    pushUrl("/");
+    applyRouteState({ mode: "home" });
+  }, [applyRouteState, pushUrl]);
+
+  const navigateToCharts = useCallback((icao: string, fileId?: number | null) => {
+    const normalized = normalizeIcao(icao);
+    if (!normalized) return;
+    pushUrl(chartPath(normalized, fileId));
+    applyRouteState({ mode: "charts", icao: normalized, fileId: fileId ?? null });
+  }, [applyRouteState, pushUrl]);
+
+  const navigateToRoutePlanning = useCallback((departure: string, arrival: string) => {
+    const dep = normalizeIcao(departure);
+    const arr = normalizeIcao(arrival);
+    if (!dep || !arr) return;
+    pushUrl(routePath(dep, arr));
+    applyRouteState({ mode: "route", departure: dep, arrival: arr });
+  }, [applyRouteState, pushUrl]);
+
+  useEffect(() => {
+    applyRouteState(parseAppRoute());
+    const onPopState = () => applyRouteState(parseAppRoute());
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [applyRouteState]);
 
   useEffect(() => {
     if (openedFileId && pdfHref) return;
@@ -189,10 +305,11 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
     (async () => {
       try {
         setAirportsLoading(true);
-        const res = await apiAirports();
-        const raw = (res as any)?.airports ?? [];
-        const list: any[] = Array.isArray(raw) ? (raw as any[]) : [];
-        const sorted = [...list].sort((a, b) => {
+        const [chartAirportsResult, routeAirportsResult] = await Promise.allSettled([
+          apiAirports(),
+          apiRouteAirports()
+        ]);
+        const sortChartAirports = (list: AirportRow[]) => [...list].sort((a, b) => {
           const ac = Number((a as any)?.fileCount ?? 0);
           const bc = Number((b as any)?.fileCount ?? 0);
           const az = ac <= 0;
@@ -200,8 +317,29 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
           if (az !== bz) return az ? 1 : -1; // 没有图的机场放到最后
           return String((a as any)?.icao ?? "").localeCompare(String((b as any)?.icao ?? ""), "en");
         });
-        setAirports(sorted);
-        setAirportsError(null);
+        const sortRouteAirports = (list: AirportRow[]) => [...list].sort((a, b) => String(a.icao ?? "").localeCompare(String(b.icao ?? ""), "en"));
+
+        let chartList: AirportRow[] = [];
+        if (chartAirportsResult.status === "fulfilled") {
+          const raw = chartAirportsResult.value?.airports ?? [];
+          chartList = Array.isArray(raw) ? raw : [];
+          setAirports(sortChartAirports(chartList));
+        } else {
+          setAirports([]);
+        }
+
+        if (routeAirportsResult.status === "fulfilled") {
+          const routeRaw = routeAirportsResult.value?.airports ?? [];
+          const routeList = Array.isArray(routeRaw) ? routeRaw : [];
+          setRouteAirports(sortRouteAirports(routeList));
+        } else {
+          setRouteAirports(sortRouteAirports(chartList));
+        }
+
+        if (chartAirportsResult.status === "rejected" && routeAirportsResult.status === "rejected") {
+          throw chartAirportsResult.reason;
+        }
+        setAirportsError(chartAirportsResult.status === "rejected" ? (chartAirportsResult.reason as any)?.message || String(chartAirportsResult.reason) : null);
       } catch (e: any) {
         setAirportsError(e?.message || String(e));
       } finally {
@@ -211,10 +349,9 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
 
-  // 切换机场时：清空筛选（收藏/分组）并关闭已打开文件
+  // 切换机场时：清空筛选（收藏/分组）
   useEffect(() => {
     if (!activeIcao) return;
-    setOpenedFileId(null);
     setViewMode("全部");
     setChartGroupFilter("全部");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -222,21 +359,32 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
 
   useEffect(() => {
     if (!ready) return;
-    if (!activeIcao) return;
+    if (!activeIcao) {
+      setTree([]);
+      setTreeError(null);
+      setTreeLoading(false);
+      return;
+    }
+    let cancelled = false;
     (async () => {
       try {
         setTreeLoading(true);
         const res = await apiTree(activeIcao);
         const t = (res as any)?.tree ?? [];
+        if (cancelled) return;
         setTree(Array.isArray(t) ? t : []);
         setTreeError(null);
       } catch (e: any) {
+        if (cancelled) return;
         setTreeError(e?.message || String(e));
       } finally {
-        setTreeLoading(false);
+        if (!cancelled) setTreeLoading(false);
       }
     })();
-  }, [activeIcao]);
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, activeIcao]);
 
   useEffect(() => {
     if (!ready) return;
@@ -346,19 +494,16 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
 
   const confirmSelection = () => {
     if (!canConfirmSelection) return;
-    const next = [draftViewIcao].filter(Boolean);
-    setSelectedIcaos(next);
-    setActiveIcao(next[0] || "");
+    navigateToCharts(draftViewIcao);
   };
 
   const resetToSelection = () => {
-    setDraftViewIcao(selectedIcaos[0] || "");
-    setSelectedIcaos([]);
-    setActiveIcao("");
+    navigateHome();
   };
 
   const openFileFromSidebar = (id: number) => {
     setOpenedFileId(id);
+    if (activeIcao) pushUrl(chartPath(activeIcao, id));
     if (isMobile) setSiderCollapsed(true);
   };
 
@@ -366,10 +511,11 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
   if (showRoutePlanning) {
     return (
       <RouteIntegratedPage
-        onBack={() => setShowRoutePlanning(false)}
+        onBack={navigateHome}
         isDark={isDark}
         initialDepartureIcao={routeDepartureIcao}
         initialArrivalIcao={routeArrivalIcao}
+        onRouteAirportsChange={navigateToRoutePlanning}
       />
     );
   }
@@ -402,6 +548,7 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
             >
               <AirportGate
                 airports={airports as any}
+                routeAirports={routeAirports}
                 airportsLoading={airportsLoading}
                 airportsError={airportsError}
                 themeMode={themeMode}
@@ -415,7 +562,7 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
                 onRouteDepartureChange={setRouteDepartureIcao}
                 routeArrivalIcao={routeArrivalIcao}
                 onRouteArrivalChange={setRouteArrivalIcao}
-                onEnterRoutePlanning={() => setShowRoutePlanning(true)}
+                onEnterRoutePlanning={() => navigateToRoutePlanning(routeDepartureIcao, routeArrivalIcao)}
               />
             </div>
           </div>
@@ -438,7 +585,7 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
             airports={airports as any}
             selectedIcaos={selectedIcaos}
             activeIcao={activeIcao}
-            onActiveIcaoChange={setActiveIcao}
+            onActiveIcaoChange={(icao) => navigateToCharts(icao)}
             onResetToSelection={resetToSelection}
             openedFileId={openedFileId}
             pdfHref={pdfHref}
@@ -499,7 +646,7 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
                 borderColor={token.colorBorderSecondary}
                 activeIcao={activeIcao}
                 selectedIcaos={selectedIcaos}
-                onActiveIcaoChange={setActiveIcao}
+                onActiveIcaoChange={(icao) => navigateToCharts(icao)}
                 viewMode={viewMode}
                 onViewModeChange={setViewMode}
                 favoritesCount={favoritesCount}
@@ -511,7 +658,7 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
                 treeLoading={treeLoading}
                 treeHasAny={tree.length > 0}
                 treeData={sidebarTree}
-                onOpenFileId={setOpenedFileId}
+                onOpenFileId={openFileFromSidebar}
                 token={{ colorPrimary: token.colorPrimary, colorWarning: token.colorWarning }}
               />
             </Layout.Sider>
@@ -570,7 +717,7 @@ export function App(props: { themeMode: ThemeMode; onThemeModeChange: (m: ThemeM
                     borderColor={token.colorBorderSecondary}
                     activeIcao={activeIcao}
                     selectedIcaos={selectedIcaos}
-                    onActiveIcaoChange={setActiveIcao}
+                    onActiveIcaoChange={(icao) => navigateToCharts(icao)}
                     viewMode={viewMode}
                     onViewModeChange={setViewMode}
                     favoritesCount={favoritesCount}

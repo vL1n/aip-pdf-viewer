@@ -31,6 +31,12 @@ export interface VatsimTrackBarProps {
   disabled?: boolean;
   /** 是否使用内联模式（无容器样式） */
   inline?: boolean;
+  /** 紧凑模式，用于移动端底部操作条 */
+  compact?: boolean;
+  /** 紧凑模式下是否显示短文案 */
+  showLabels?: boolean;
+  /** 底部操作条统一按钮样式 */
+  buttonStyle?: React.CSSProperties;
 }
 
 export function VatsimTrackBar({
@@ -39,7 +45,10 @@ export function VatsimTrackBar({
   onLocateAircraft,
   pilot,
   disabled = false,
-  inline = false
+  inline = false,
+  compact = false,
+  showLabels = !compact,
+  buttonStyle
 }: VatsimTrackBarProps) {
   const { token } = theme.useToken();
 
@@ -107,7 +116,14 @@ export function VatsimTrackBar({
   }, [pilot, onImportRoute]);
 
   const containerStyle = inline
-    ? { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" as const }
+    ? {
+        display: "flex",
+        alignItems: "center",
+        gap: compact ? 6 : 12,
+        flexWrap: compact ? "nowrap" as const : "wrap" as const,
+        flex: compact ? "0 0 auto" : undefined,
+        minWidth: 0
+      }
     : {
         padding: "8px 16px",
         background: token.colorBgElevated,
@@ -121,28 +137,45 @@ export function VatsimTrackBar({
   return (
     <div style={containerStyle}>
       {/* 追踪开关 */}
-      <Space size="small">
-        <Tooltip title="开启后将在地图上显示该用户的实时位置">
-          <Space size={4}>
-            <span style={{ color: token.colorTextSecondary, fontSize: 13, whiteSpace: "nowrap" }}>
-              ✈️ VATSIM 追踪
-            </span>
-            <Switch
-              size="small"
-              checked={trackEnabled}
-              onChange={setTrackEnabled}
-              loading={loading}
-              disabled={disabled}
-            />
-          </Space>
+      {compact ? (
+        <Tooltip title={trackEnabled ? "关闭 VATSIM 追踪" : "开启 VATSIM 追踪"}>
+          <Button
+            size="small"
+            shape={showLabels ? "round" : "circle"}
+            icon={<AimOutlined />}
+            onClick={() => setTrackEnabled((value) => !value)}
+            loading={loading}
+            disabled={disabled}
+            aria-label={trackEnabled ? "关闭 VATSIM 追踪" : "开启 VATSIM 追踪"}
+            style={buttonStyle}
+          >
+            {showLabels ? "追踪" : null}
+          </Button>
         </Tooltip>
-      </Space>
+      ) : (
+        <Space size="small">
+          <Tooltip title="开启后将在地图上显示该用户的实时位置">
+            <Space size={4}>
+              <span style={{ color: token.colorTextSecondary, fontSize: 13, whiteSpace: "nowrap" }}>
+                ✈️ VATSIM 追踪
+              </span>
+              <Switch
+                size="small"
+                checked={trackEnabled}
+                onChange={setTrackEnabled}
+                loading={loading}
+                disabled={disabled}
+              />
+            </Space>
+          </Tooltip>
+        </Space>
+      )}
 
       {/* CID 输入 */}
       <Input
         size="small"
         placeholder="CID"
-        style={{ width: 100 }}
+        style={{ width: compact ? 76 : 100 }}
         value={cidInput}
         onChange={(e) => setCidInput(e.target.value)}
         disabled={!trackEnabled || disabled}
@@ -150,14 +183,14 @@ export function VatsimTrackBar({
 
       {/* 在线状态和航班信息 */}
       {pilot && (
-        <Space size="small">
+        <Space size={compact ? 4 : "small"}>
           <Tag color="green" style={{ margin: 0 }}>
             {pilot.callsign}
           </Tag>
-          <span style={{ color: token.colorTextSecondary, fontSize: 12 }}>
+          {!compact && <span style={{ color: token.colorTextSecondary, fontSize: 12 }}>
             FL{Math.round(pilot.altitude / 100)} | {pilot.groundspeed}kt | {pilot.heading}°
-          </span>
-          {pilot.flight_plan && (
+          </span>}
+          {!compact && pilot.flight_plan && (
             <span style={{ color: token.colorTextSecondary, fontSize: 12 }}>
               {pilot.flight_plan.departure} → {pilot.flight_plan.arrival}
             </span>
@@ -167,16 +200,19 @@ export function VatsimTrackBar({
 
       {/* 操作按钮 */}
       {pilot && (
-        <Space size="small">
+        <Space size={compact ? 4 : "small"}>
           {pilot.flight_plan?.route && onImportRoute && (
             <Tooltip title="导入航路到解析面板">
               <Button
                 size="small"
+                shape={showLabels ? "round" : "circle"}
                 icon={<ImportOutlined />}
                 onClick={handleImportRoute}
                 disabled={disabled}
+                aria-label="导入 VATSIM 航路"
+                style={buttonStyle ?? { boxShadow: "none" }}
               >
-                导入航路
+                {showLabels ? (compact ? "导入" : "导入航路") : null}
               </Button>
             </Tooltip>
           )}
@@ -184,10 +220,15 @@ export function VatsimTrackBar({
             <Tooltip title="定位到飞机位置">
               <Button
                 size="small"
+                shape={showLabels ? "round" : "circle"}
                 icon={<AimOutlined />}
                 onClick={onLocateAircraft}
                 disabled={disabled}
-              />
+                aria-label="定位到飞机位置"
+                style={buttonStyle ?? { boxShadow: "none" }}
+              >
+                {showLabels ? "定位" : null}
+              </Button>
             </Tooltip>
           )}
         </Space>

@@ -31,6 +31,12 @@ export interface KmlUploadBarProps {
   disabled?: boolean;
   /** 是否使用内联模式（无容器样式） */
   inline?: boolean;
+  /** 紧凑模式，用于移动端底部操作条 */
+  compact?: boolean;
+  /** 紧凑模式下是否显示短文案 */
+  showLabels?: boolean;
+  /** 底部操作条统一按钮样式 */
+  buttonStyle?: React.CSSProperties;
 }
 
 export function KmlUploadBar({
@@ -38,7 +44,10 @@ export function KmlUploadBar({
   onClear,
   kmlResult,
   disabled = false,
-  inline = false
+  inline = false,
+  compact = false,
+  showLabels = !compact,
+  buttonStyle
 }: KmlUploadBarProps) {
   const { token } = theme.useToken();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -85,7 +94,14 @@ export function KmlUploadBar({
   }, [onClear]);
 
   const containerStyle = inline
-    ? { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" as const }
+    ? {
+        display: "flex",
+        alignItems: "center",
+        gap: compact ? 6 : 8,
+        flexWrap: compact ? "nowrap" as const : "wrap" as const,
+        flex: compact ? "0 0 auto" : undefined,
+        minWidth: 0
+      }
     : {
         padding: "8px 16px",
         background: token.colorBgElevated,
@@ -108,39 +124,53 @@ export function KmlUploadBar({
       />
 
       {/* 上传控件 */}
-      <Space size="small">
-        <span style={{ color: token.colorTextSecondary, fontSize: 13, whiteSpace: "nowrap" }}>
-          📁 KML 导入
-        </span>
-        <Button
-          size="small"
-          icon={<UploadOutlined />}
-          onClick={handleUploadClick}
-          loading={parsing}
-          disabled={disabled}
-        >
-          {parsing ? "解析中..." : "选择文件"}
-        </Button>
+      <Space size={compact ? 4 : "small"}>
+        <Tooltip title={compact ? (parsing ? "正在解析 KML" : "导入 KML") : undefined}>
+          <Button
+            size="small"
+            shape={showLabels ? "round" : "circle"}
+            icon={<UploadOutlined />}
+            onClick={handleUploadClick}
+            loading={parsing}
+            disabled={disabled}
+            aria-label="导入 KML"
+            style={buttonStyle ?? { boxShadow: "none" }}
+          >
+            {showLabels ? (compact ? "KML" : parsing ? "解析中" : "导入 KML") : null}
+          </Button>
+        </Tooltip>
       </Space>
 
       {/* KML 信息 */}
       {kmlResult && (
-        <Space size="small">
-          <Tag color="blue" style={{ margin: 0 }}>
-            <FileTextOutlined style={{ marginRight: 4 }} />
-            {kmlResult.name || "KML"}
-          </Tag>
-          <Tag color="cyan" style={{ margin: 0 }}>
+        <Space size={compact ? 4 : "small"}>
+          {compact ? (
+            <Tooltip title={kmlResult.name || "KML 已导入"}>
+              <Tag color="blue" style={{ margin: 0 }}>
+                <FileTextOutlined />
+              </Tag>
+            </Tooltip>
+          ) : (
+            <Tag color="blue" style={{ margin: 0 }}>
+              <FileTextOutlined style={{ marginRight: 4 }} />
+              {kmlResult.name || "KML"}
+            </Tag>
+          )}
+          {!compact && <Tag color="cyan" style={{ margin: 0 }}>
             {kmlResult.totalPoints} 点
-          </Tag>
+          </Tag>}
           <Tooltip title="清除 KML">
             <Button
               size="small"
-              type="text"
+              shape={showLabels ? "round" : "circle"}
               icon={<DeleteOutlined />}
               onClick={handleClear}
               disabled={disabled}
-            />
+              aria-label="清除 KML"
+              style={buttonStyle ?? { boxShadow: "none" }}
+            >
+              {showLabels ? "清除" : null}
+            </Button>
           </Tooltip>
         </Space>
       )}

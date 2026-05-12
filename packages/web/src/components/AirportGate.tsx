@@ -6,6 +6,7 @@ import type { ThemeMode } from "../hooks/useThemeMode";
 
 export function AirportGate(props: {
   airports: AirportRow[];
+  routeAirports: AirportRow[];
   airportsLoading: boolean;
   airportsError: string | null;
 
@@ -32,6 +33,7 @@ export function AirportGate(props: {
 }) {
   const {
     airports,
+    routeAirports,
     airportsLoading,
     airportsError,
     themeMode,
@@ -52,6 +54,19 @@ export function AirportGate(props: {
     value: a.icao,
     label: `${a.icao} ${a.name ? `- ${a.name}` : ""} (${a.fileCount})`
   }));
+  const chartOptions = options.filter((option) => {
+    const airport = airports.find((item) => item.icao === option.value);
+    return Number(airport?.fileCount ?? 0) > 0;
+  });
+  const routeOptions = (routeAirports.length > 0 ? routeAirports : airports).map((a) => ({
+    value: a.icao,
+    label: `${a.icao} ${a.name ? `- ${a.name}` : ""}${Number(a.fileCount ?? 0) > 0 ? ` (${a.fileCount}图)` : " (无航图)"}`
+  }));
+  const filterAirportOption = (input: string, option?: { label?: React.ReactNode; value?: string }) => {
+    const keyword = input.trim().toUpperCase();
+    if (!keyword) return true;
+    return `${option?.value ?? ""} ${String(option?.label ?? "")}`.toUpperCase().includes(keyword);
+  };
 
   // 航线规划按钮只有在起/降机场都选择后才可点击
   const canEnterRoutePlanning = !!routeDepartureIcao && !!routeArrivalIcao && routeDepartureIcao !== routeArrivalIcao;
@@ -89,12 +104,13 @@ export function AirportGate(props: {
         value={draftViewIcao || undefined}
         onChange={(v: string | undefined) => onDraftViewIcaoChange(v || "")}
         loading={airportsLoading}
-        disabled={airportsLoading || airports.length === 0}
+        disabled={airportsLoading || chartOptions.length === 0}
         showSearch
         allowClear
         optionFilterProp="label"
-        options={options}
-        placeholder={airportsLoading ? "正在加载机场列表…" : "选择 ICAO"}
+        filterOption={filterAirportOption}
+        options={chartOptions}
+        placeholder={airportsLoading ? "正在加载机场列表…" : "选择有航图的 ICAO"}
       />
 
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
@@ -118,7 +134,7 @@ export function AirportGate(props: {
           </Typography.Text>
 
           {/* 起/降机场选择 */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
             <div style={{ minWidth: 0 }}>
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>起飞机场</Typography.Text>
               <Select
@@ -133,12 +149,13 @@ export function AirportGate(props: {
                   }
                 }}
                 loading={airportsLoading}
-                disabled={airportsLoading || airports.length === 0}
+                disabled={airportsLoading || routeOptions.length === 0}
                 showSearch
                 allowClear
                 optionFilterProp="label"
-                options={options}
-                placeholder="选择起飞机场"
+                filterOption={filterAirportOption}
+                options={routeOptions}
+                placeholder="搜索 nd.db3 全量起飞机场"
               />
             </div>
             <div style={{ minWidth: 0 }}>
@@ -155,12 +172,13 @@ export function AirportGate(props: {
                   }
                 }}
                 loading={airportsLoading}
-                disabled={airportsLoading || airports.length === 0}
+                disabled={airportsLoading || routeOptions.length === 0}
                 showSearch
                 allowClear
                 optionFilterProp="label"
-                options={options.filter((o) => !routeDepartureIcao || o.value !== routeDepartureIcao)}
-                placeholder="选择降落机场"
+                filterOption={filterAirportOption}
+                options={routeOptions.filter((o) => !routeDepartureIcao || o.value !== routeDepartureIcao)}
+                placeholder="搜索 nd.db3 全量降落机场"
               />
             </div>
           </div>

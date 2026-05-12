@@ -65,6 +65,10 @@ export async function apiAirports() {
   return await getJson<{ airports: AirportRow[] }>("/api/airports");
 }
 
+export async function apiRouteAirports() {
+  return await getJson<{ airports: AirportRow[] }>("/api/route/airports");
+}
+
 export async function apiTree(icao: string) {
   const qs = new URLSearchParams({ icao });
   return await getJson<{ icao: string | null; tree: TreeNode[] }>(`/api/tree?${qs.toString()}`);
@@ -224,6 +228,15 @@ export interface ShortestRouteNavPoint {
   type: "airport" | "waypoint" | "navaid";
 }
 
+export interface ViaRouteItem {
+  type: "waypoint";
+  ident: string;
+  waypointId?: number;
+  name?: string | null;
+  lat?: number;
+  lon?: number;
+}
+
 export interface ShortestRouteLeg {
   from: string;
   to: string;
@@ -253,9 +266,32 @@ export async function apiRouteShortest(input: {
   departure: string;
   arrival: string;
   via?: string[];
+  viaItems?: ViaRouteItem[];
+  departurePoint?: ViaRouteItem | null;
+  arrivalPoint?: ViaRouteItem | null;
   options?: ShortestRouteOptions;
 }) {
   return await postJson<ShortestRouteResult>("/api/route/shortest", input);
+}
+
+export interface WaypointCandidate {
+  id: number;
+  ident: string;
+  name: string | null;
+  lat: number;
+  lon: number;
+  type: "waypoint";
+  inAirwayGraph: boolean;
+}
+
+export async function apiRouteWaypointCandidates(ident: string) {
+  const qs = new URLSearchParams({ ident });
+  return await getJson<{
+    success: boolean;
+    error: string | null;
+    ident: string;
+    candidates: WaypointCandidate[];
+  }>(`/api/route/waypoint-candidates?${qs.toString()}`);
 }
 
 export interface HighAirwayWaypoint {
@@ -352,7 +388,13 @@ export interface KmlParseResult {
 
 /** 解析 KML 文件内容 */
 export async function apiKmlParse(content: string) {
-  return await postJson<KmlParseResult>("/api/kml/parse", { content });
+  const res = await fetch("/api/kml/parse", {
+    method: "POST",
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+    body: content
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return (await res.json()) as KmlParseResult;
 }
 
 // ---- Route Fitting (航路拟合) ----

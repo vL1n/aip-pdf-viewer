@@ -12,7 +12,7 @@ import { initAnnotationsSchema, initFavoritesSchema } from "./sqlite.js";
 import { NavDatabase } from "./navdb.js";
 import { parseRoute } from "./routeParser.js";
 import { parseKml } from "./kmlParser.js";
-import { calculateShortestRoute, type ShortestRouteOptions } from "./routeShortest.js";
+import { calculateShortestRoute, type ShortestRouteOptions, type ViaRouteItem } from "./routeShortest.js";
 
 function isInsideRoot(rootPath: string, filePath: string) {
   const root = path.resolve(rootPath);
@@ -49,9 +49,20 @@ export type CreateServerOptions = {
   indexManager: IndexManager;
 };
 
+const UNLIMITED_BODY_LIMIT_BYTES = Number.MAX_SAFE_INTEGER;
+const unlimitedBodyRouteOptions = { bodyLimit: UNLIMITED_BODY_LIMIT_BYTES };
+
+function readTextBody(body: unknown) {
+  if (typeof body === "string") return body;
+  if (Buffer.isBuffer(body)) return body.toString("utf8");
+  return "";
+}
+
 export function createServer({ db, favoritesDb, navDb, rootPath, webDistPath, indexManager }: CreateServerOptions) {
   const app = fastify({
-    logger: true
+    logger: true,
+    // 本地工具型应用允许导入大 KML / 收藏文件；不使用 Fastify 默认 1MB body 限制。
+    bodyLimit: UNLIMITED_BODY_LIMIT_BYTES
   });
 
   // 确保收藏表存在（独立 SQLite；不依赖索引构建是否完成）
@@ -157,6 +168,28 @@ export function createServer({ db, favoritesDb, navDb, rootPath, webDistPath, in
       )
       .all();
     return { airports: rows };
+  });
+
+  app.get("/api/route/airports", async (req, reply) => {
+    if (!navDatabase) {
+      return reply.code(503).send({ airports: [], error: "导航数据库不可用（未找到 nd.db3）" });
+    }
+
+    const fileCountRows = db
+      .prepare(`SELECT icao, COUNT(id) AS fileCount FROM files WHERE icao IS NOT NULL GROUP BY icao`)
+      .all() as Array<{ icao: string | null; fileCount: number }>;
+    const fileCounts = new Map(fileCountRows.map((row) => [String(row.icao ?? "").toUpperCase(), Number(row.fileCount ?? 0)]));
+
+    return {
+      airports: navDatabase.listAirports().map((airport) => ({
+        icao: airport.icao,
+        name: airport.name,
+        bureau: null,
+        fileCount: fileCounts.get(airport.icao) ?? 0,
+        lat: airport.lat,
+        lon: airport.lon
+      }))
+    };
   });
 
   app.get("/api/tree", async (req, reply) => {
@@ -265,7 +298,7 @@ export function createServer({ db, favoritesDb, navDb, rootPath, webDistPath, in
     };
   });
 
-  app.post("/api/favorites/import", async (req, reply) => {
+  app.post("/api/favorites/import", unlimitedBodyRouteOptions, async (req, reply) => {
     const body = (req.body || {}) as any;
     const mode = String(body?.mode || "merge");
     const favorites = Array.isArray(body?.favorites) ? (body.favorites as any[]) : null;
@@ -694,6 +727,9 @@ export function createServer({ db, favoritesDb, navDb, rootPath, webDistPath, in
       departure?: string;
       arrival?: string;
       via?: string[] | string;
+      viaItems?: Array<{ type?: string; ident?: string; waypointId?: number; name?: string | null; lat?: number; lon?: number }>;
+      departurePoint?: { type?: string; ident?: string; waypointId?: number; name?: string | null; lat?: number; lon?: number } | null;
+      arrivalPoint?: { type?: string; ident?: string; waypointId?: number; name?: string | null; lat?: number; lon?: number } | null;
       options?: ShortestRouteOptions;
     };
     const departure = typeof body.departure === "string" ? body.departure.trim().toUpperCase() : "";
@@ -704,6 +740,43 @@ export function createServer({ db, favoritesDb, navDb, rootPath, webDistPath, in
         : Array.isArray(body.via)
           ? body.via.map((item) => String(item).trim().toUpperCase()).filter(Boolean)
           : [];
+    if (Array.isArray(body.viaItems) && body.viaItems.some((item) => item?.type === "airway")) {
+      return reply.code(400).send({
+        success: false,
+        error: "途径航路能力已移除，请改为选择具体途径航点",
+        routeString: "",
+        points: [],
+        legs: []
+      });
+    }
+
+    const viaItems: ViaRouteItem[] | undefined = Array.isArray(body.viaItems)
+      ? body.viaItems
+          .map((item) => ({
+            type: "waypoint" as const,
+            ident: String(item?.ident ?? "").trim().toUpperCase(),
+            waypointId: Number.isInteger(item?.waypointId) ? item.waypointId : undefined,
+            name: item?.name ?? null,
+            lat: Number.isFinite(item?.lat) ? item.lat : undefined,
+            lon: Number.isFinite(item?.lon) ? item.lon : undefined
+          }))
+          .filter((item) => item.ident)
+      : undefined;
+    const normalizeBoundaryPoint = (item: typeof body.departurePoint): ViaRouteItem | null => {
+      if (!item) return null;
+      const ident = String(item?.ident ?? "").trim().toUpperCase();
+      if (!ident) return null;
+      return {
+        type: "waypoint",
+        ident,
+        waypointId: Number.isInteger(item?.waypointId) ? item.waypointId : undefined,
+        name: item?.name ?? null,
+        lat: Number.isFinite(item?.lat) ? item.lat : undefined,
+        lon: Number.isFinite(item?.lon) ? item.lon : undefined
+      };
+    };
+    const departurePoint = normalizeBoundaryPoint(body.departurePoint);
+    const arrivalPoint = normalizeBoundaryPoint(body.arrivalPoint);
 
     if (!departure || !arrival) {
       return reply.code(400).send({
@@ -720,6 +793,9 @@ export function createServer({ db, favoritesDb, navDb, rootPath, webDistPath, in
         departure,
         arrival,
         via,
+        viaItems,
+        departurePoint,
+        arrivalPoint,
         options: body.options
       });
     } catch (err: any) {
@@ -729,6 +805,46 @@ export function createServer({ db, favoritesDb, navDb, rootPath, webDistPath, in
         routeString: "",
         points: [],
         legs: []
+      });
+    }
+  });
+
+  /** 查询同名航点候选，供前端在重复航点时让用户选择真实坐标 */
+  app.get("/api/route/waypoint-candidates", async (req, reply) => {
+    if (!navDatabase) {
+      return reply.code(503).send({
+        success: false,
+        error: "导航数据库不可用（未找到 nd.db3）",
+        candidates: []
+      });
+    }
+
+    const q = req.query as { ident?: string };
+    const ident = String(q.ident ?? "").trim().toUpperCase();
+    if (!ident) {
+      return reply.code(400).send({
+        success: false,
+        error: "请提供航点 ident",
+        candidates: []
+      });
+    }
+
+    try {
+      const airwayWaypointIds = navDatabase.getAirwayWaypointIds();
+      return {
+        success: true,
+        error: null,
+        ident,
+        candidates: navDatabase.findWaypointCandidates(ident).map((point) => ({
+          ...point,
+          inAirwayGraph: airwayWaypointIds.has(point.id)
+        }))
+      };
+    } catch (err: any) {
+      return reply.code(500).send({
+        success: false,
+        error: err?.message || "查询航点候选失败",
+        candidates: []
       });
     }
   });
@@ -777,9 +893,13 @@ export function createServer({ db, favoritesDb, navDb, rootPath, webDistPath, in
   // ---- KML Parsing (KML 解析) ----
 
   /** 解析 KML 文件 */
-  app.post("/api/kml/parse", async (req, reply) => {
-    const body = (req.body || {}) as { content?: string };
-    const kmlContent = typeof body.content === "string" ? body.content : "";
+  app.post("/api/kml/parse", unlimitedBodyRouteOptions, async (req, reply) => {
+    const body = req.body as unknown;
+    const kmlContent = typeof body === "object" && body !== null && !Buffer.isBuffer(body)
+      ? typeof (body as { content?: unknown }).content === "string"
+        ? (body as { content: string }).content
+        : ""
+      : readTextBody(body);
 
     if (!kmlContent) {
       return reply.code(400).send({
@@ -820,11 +940,24 @@ export function createServer({ db, favoritesDb, navDb, rootPath, webDistPath, in
       index: false
     });
 
-    // 单页应用入口（当前 UI 没有前端路由，/ 足够；如果未来加路由再扩展）
-    app.get("/", async (_req, reply) => {
+    const sendIndexHtml = (reply: any) => {
       const indexHtml = path.join(webDistPath, "index.html");
       if (!fs.existsSync(indexHtml)) return reply.code(404).send("web not built");
       return reply.type("text/html").send(fs.readFileSync(indexHtml));
+    };
+
+    app.get("/", async (_req, reply) => {
+      return sendIndexHtml(reply);
+    });
+
+    app.setNotFoundHandler((req, reply) => {
+      const url = req.raw.url || "/";
+      const pathname = url.split("?")[0] || "/";
+      const hasExtension = /\.[a-zA-Z0-9]+$/.test(pathname);
+      if (pathname.startsWith("/api") || hasExtension || (req.method !== "GET" && req.method !== "HEAD")) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+      return sendIndexHtml(reply);
     });
   }
 

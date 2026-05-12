@@ -17,7 +17,6 @@ import {
   Space,
   Typography,
   Spin,
-  Card,
   Tabs,
   Drawer,
   theme,
@@ -26,8 +25,6 @@ import {
 import {
   ArrowLeftOutlined,
   QuestionCircleOutlined,
-  UnorderedListOutlined,
-  CloseOutlined,
   FullscreenOutlined,
   AimOutlined,
   EnvironmentOutlined,
@@ -203,7 +200,6 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
 
   // 地图控制
   const [showHelp, setShowHelp] = useState(false);
-  const [showLegend, setShowLegend] = useState(false);
   const [fitBoundsTrigger, setFitBoundsTrigger] = useState(0);
   const [vatsimCenterTrigger, setVatsimCenterTrigger] = useState(0);
 
@@ -338,6 +334,15 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
         <Button icon={<ArrowLeftOutlined />} onClick={onBack}>
           返回
         </Button>
+        <div
+          aria-hidden="true"
+          style={{
+            width: 1,
+            height: 22,
+            background: token.colorBorderSecondary,
+            flex: "0 0 auto"
+          }}
+        />
         <Typography.Title level={4} style={{ margin: 0 }}>
           航路规划
         </Typography.Title>
@@ -748,69 +753,6 @@ export function RouteMapPage({ onBack }: RouteMapPageProps) {
                 </AntTooltip>
               )}
 
-              {/* 图例 */}
-              {showLegend ? (
-                <Card
-                  size="small"
-                  style={{ opacity: 0.95 }}
-                  title={
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                      <span style={{ fontSize: 12 }}>图例</span>
-                      <Button type="text" size="small" icon={<CloseOutlined />} onClick={() => setShowLegend(false)} style={{ marginRight: -8 }} />
-                    </div>
-                  }
-                  styles={{ header: { minHeight: 32, padding: "0 12px" }, body: { padding: "8px 12px" } }}
-                >
-                  <Space direction="vertical" size={4}>
-                    <Space>
-                      <div style={{ width: 14, height: 14, background: "#e74c3c", borderRadius: "50%" }} />
-                      <span>机场</span>
-                    </Space>
-                    <Space>
-                      <div style={{ width: 14, height: 14, background: "#2ecc71", borderRadius: "50%" }} />
-                      <span>指定航点</span>
-                    </Space>
-                    <Space>
-                      <div style={{ width: 14, height: 14, background: "#3498db", borderRadius: "50%" }} />
-                      <span>中间航点</span>
-                    </Space>
-                    <Space>
-                      <div style={{ width: 14, height: 14, background: "#9b59b6", borderRadius: "50%" }} />
-                      <span>VOR/NDB</span>
-                    </Space>
-                    <Space>
-                      <div style={{ width: 30, height: 3, background: "#3498db" }} />
-                      <span>解析航路</span>
-                    </Space>
-                    <Space>
-                      <div style={{ width: 30, height: 2, background: "#e67e22", borderTop: "2px dashed #e67e22" }} />
-                      <span>KML 航迹</span>
-                    </Space>
-                    <Space>
-                      <div style={{ width: 30, height: 3, background: "#27ae60" }} />
-                      <span>拟合航路</span>
-                    </Space>
-                    {vatsimPilot && (
-                      <Space>
-                        <div style={{ width: 14, height: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                          <svg viewBox="0 0 24 24" width="14" height="14" fill="#f39c12">
-                            <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
-                          </svg>
-                        </div>
-                        <span>VATSIM</span>
-                      </Space>
-                    )}
-                  </Space>
-                </Card>
-              ) : (
-                <Button
-                  type="primary"
-                  shape="circle"
-                  icon={<UnorderedListOutlined />}
-                  onClick={() => setShowLegend(true)}
-                  style={{ opacity: 0.9, boxShadow: "0 2px 6px rgba(0,0,0,0.2)" }}
-                />
-              )}
             </div>
           </div>
         </div>

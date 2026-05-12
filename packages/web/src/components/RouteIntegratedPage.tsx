@@ -23,7 +23,9 @@ import {
   Empty,
   Typography,
   Slider,
-  theme
+  Select,
+  theme,
+  Tooltip as AntTooltip
 } from "antd";
 import type { DataNode } from "antd/es/tree";
 import {
@@ -33,7 +35,6 @@ import {
   EnvironmentOutlined,
   FileTextOutlined,
   MenuOutlined,
-  UnorderedListOutlined,
   CloseOutlined,
   PlusOutlined
 } from "@ant-design/icons";
@@ -43,7 +44,7 @@ import "leaflet/dist/leaflet.css";
 
 import {
   apiRouteStatus,
-  apiAirports,
+  apiRouteAirports,
   apiTree,
   apiFavoriteRelPaths,
   apiFavoriteAdd,
@@ -57,6 +58,7 @@ import {
   type KmlParseResult,
   type HighAirwayWaypoint,
   type ShortestRouteResult,
+  type ViaRouteItem,
   type AirportRow,
   type TreeNode
 } from "../api";
@@ -70,7 +72,8 @@ import { buildChartGroupTags, buildSidebarTreeData, type ChartGroupTag } from ".
 import {
   removeShortestRouteAirway,
   removeShortestRoutePoint,
-  removeShortestRouteToken
+  removeShortestRouteToken,
+  simplifyShortestRouteAirways
 } from "../utils/routeEditing";
 
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
@@ -109,9 +112,26 @@ const airportIcon = createIcon("#e74c3c", 14);
 const waypointIcon = createIcon("#3498db", 8);
 const navaidIcon = createIcon("#9b59b6", 10);
 const explicitWaypointIcon = createIcon("#2ecc71", 10);
+const departureBoundaryIcon = createIcon("#f97316", 12);
+const arrivalBoundaryIcon = createIcon("#06b6d4", 12);
 const highAirwayWaypointIcon = createIcon("#f59e0b", 9);
 const searchAnchorIcon = createIcon("#111827", 12);
 const NM_TO_METERS = 1852;
+
+function normalizeAirportIcao(value: string | null | undefined) {
+  return String(value ?? "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
+}
+
+function airportOptionLabel(airport: AirportRow) {
+  const chartSuffix = Number(airport.fileCount ?? 0) > 0 ? `${airport.fileCount}图` : "无航图";
+  return `${airport.icao}${airport.name ? ` - ${airport.name}` : ""} · ${chartSuffix}`;
+}
+
+function filterAirportOption(input: string, option?: { label?: unknown; value?: unknown }) {
+  const keyword = input.trim().toUpperCase();
+  if (!keyword) return true;
+  return `${option?.value ?? ""} ${String(option?.label ?? "")}`.toUpperCase().includes(keyword);
+}
 
 // 创建飞机图标（带朝向）
 const createAircraftIcon = (heading: number) => {
@@ -137,23 +157,36 @@ const createAircraftIcon = (heading: number) => {
 
 function getMarkerIcon(point: ParsedRoutePoint) {
   if (point.isAirport) return airportIcon;
+  if (point.remark === "离场点") return departureBoundaryIcon;
+  if (point.remark === "进场点") return arrivalBoundaryIcon;
   if (point.type === "navaid") return navaidIcon;
   if (point.isExplicit) return explicitWaypointIcon;
   return waypointIcon;
 }
 
 /** 自动调整地图视野的组件 */
-function FitBounds({ points, trigger }: { points: Array<{ lat: number; lon: number }>; trigger: number }) {
+function FitBounds({
+  points,
+  trigger,
+  bottomInsetPx
+}: {
+  points: Array<{ lat: number; lon: number }>;
+  trigger: number;
+  bottomInsetPx: number;
+}) {
   const map = useMap();
   const [lastTrigger, setLastTrigger] = useState(0);
 
   useEffect(() => {
     if (trigger > lastTrigger && points.length > 0) {
       const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lon]));
-      map.fitBounds(bounds, { padding: [50, 50] });
+      map.fitBounds(bounds, {
+        paddingTopLeft: [50, 50],
+        paddingBottomRight: [50, Math.max(50, bottomInsetPx + 32)]
+      });
       setLastTrigger(trigger);
     }
-  }, [map, points, trigger, lastTrigger]);
+  }, [bottomInsetPx, map, points, trigger, lastTrigger]);
 
   return null;
 }
@@ -185,12 +218,47 @@ function FollowAircraft({ pilot, enabled, centerTrigger }: { pilot: VatsimPilot 
   return null;
 }
 
-function MapRightClickSelector({ onSelect }: { onSelect: (point: { lat: number; lon: number }) => void }) {
+function MapRightClickSelector({
+  searchActive,
+  onSelect,
+  onCancel
+}: {
+  searchActive: boolean;
+  onSelect: (point: { lat: number; lon: number }) => void;
+  onCancel: () => void;
+}) {
   useMapEvents({
     contextmenu: (e) => {
+      e.originalEvent.preventDefault();
       onSelect({ lat: e.latlng.lat, lon: e.latlng.lng });
+    },
+    click: () => {
+      if (searchActive) onCancel();
     }
   });
+  return null;
+}
+
+function DisableMapNativeLongPress() {
+  const map = useMap();
+
+  useEffect(() => {
+    const container = map.getContainer();
+    const preventNativeMenu = (event: Event) => {
+      event.preventDefault();
+    };
+
+    container.addEventListener("contextmenu", preventNativeMenu);
+    container.addEventListener("selectstart", preventNativeMenu);
+    container.addEventListener("dragstart", preventNativeMenu);
+
+    return () => {
+      container.removeEventListener("contextmenu", preventNativeMenu);
+      container.removeEventListener("selectstart", preventNativeMenu);
+      container.removeEventListener("dragstart", preventNativeMenu);
+    };
+  }, [map]);
+
   return null;
 }
 
@@ -201,6 +269,8 @@ export interface RouteIntegratedPageProps {
   initialDepartureIcao: string;
   /** 初始降落机场 ICAO */
   initialArrivalIcao: string;
+  /** 起降机场变化时同步外部 URL 状态 */
+  onRouteAirportsChange?: (departureIcao: string, arrivalIcao: string) => void;
 }
 
 type TabKey = "overview" | "chart";
@@ -209,7 +279,8 @@ export function RouteIntegratedPage({
   onBack,
   isDark,
   initialDepartureIcao,
-  initialArrivalIcao
+  initialArrivalIcao,
+  onRouteAirportsChange
 }: RouteIntegratedPageProps) {
   const windowHeight = useWindowHeight();
   const { token } = theme.useToken();
@@ -233,7 +304,9 @@ export function RouteIntegratedPage({
   // KML 导入状态
   const [kmlResult, setKmlResult] = useState<KmlParseResult | null>(null);
   const [shortestResult, setShortestResult] = useState<ShortestRouteResult | null>(null);
-  const [shortestViaInput, setShortestViaInput] = useState("");
+  const [shortestDeparturePoint, setShortestDeparturePoint] = useState<ViaRouteItem | null>(null);
+  const [shortestArrivalPoint, setShortestArrivalPoint] = useState<ViaRouteItem | null>(null);
+  const [shortestViaItems, setShortestViaItems] = useState<ViaRouteItem[]>([]);
 
   // 地图右键高空航路点搜索
   const [airwaySearchAnchor, setAirwaySearchAnchor] = useState<{ lat: number; lon: number } | null>(null);
@@ -246,9 +319,11 @@ export function RouteIntegratedPage({
   const [vatsimPilot, setVatsimPilot] = useState<VatsimPilot | null>(null);
 
   // 地图控制
-  const [showLegend, setShowLegend] = useState(false);
   const [fitBoundsTrigger, setFitBoundsTrigger] = useState(0);
   const [vatsimCenterTrigger, setVatsimCenterTrigger] = useState(0);
+  const [mapBottomBarHeight, setMapBottomBarHeight] = useState(0);
+  const [mobileBottomBarLabelsVisible, setMobileBottomBarLabelsVisible] = useState(true);
+  const mapBottomBarRef = useRef<HTMLDivElement | null>(null);
 
   // 外部航路输入（用于 VATSIM 导入）
   const [externalRouteInput, setExternalRouteInput] = useState<string | undefined>(undefined);
@@ -271,6 +346,18 @@ export function RouteIntegratedPage({
   const [viewMode, setViewMode] = useState<"全部" | "收藏">("全部");
   const [favoriteRelPaths, setFavoriteRelPaths] = useState<Set<string>>(new Set());
 
+  useEffect(() => {
+    if (!isMobile) setSiderCollapsed(false);
+  }, [isMobile]);
+
+  useEffect(() => {
+    setDepartureIcao(normalizeAirportIcao(initialDepartureIcao));
+  }, [initialDepartureIcao]);
+
+  useEffect(() => {
+    setArrivalIcao(normalizeAirportIcao(initialArrivalIcao));
+  }, [initialArrivalIcao]);
+
   // 检查航路解析功能是否可用
   useEffect(() => {
     (async () => {
@@ -291,7 +378,7 @@ export function RouteIntegratedPage({
     (async () => {
       try {
         setAirportsLoading(true);
-        const res = await apiAirports();
+        const res = await apiRouteAirports();
         const raw = res?.airports ?? [];
         const list: AirportRow[] = Array.isArray(raw) ? raw : [];
         const sorted = [...list].sort((a, b) => {
@@ -393,6 +480,102 @@ export function RouteIntegratedPage({
   }, [tree, viewMode, favoriteRelPaths]);
 
   const favoritesCount = useMemo(() => favoriteRelPaths.size, [favoriteRelPaths]);
+  const routeAirportOptions = useMemo(() => {
+    return airports.map((airport) => ({
+      value: airport.icao.toUpperCase(),
+      label: airportOptionLabel(airport)
+    }));
+  }, [airports]);
+
+  const routeChartIcaos = useMemo(() => {
+    const fileCounts = new Map(airports.map((airport) => [airport.icao.toUpperCase(), Number(airport.fileCount ?? 0)]));
+    return [departureIcao, arrivalIcao]
+      .map((icao) => icao.toUpperCase())
+      .filter((icao, idx, list) => icao && list.indexOf(icao) === idx && (fileCounts.get(icao) ?? 0) > 0);
+  }, [airports, arrivalIcao, departureIcao]);
+
+  useEffect(() => {
+    if (airportsLoading) return;
+    if (routeChartIcaos.length === 0) {
+      if (activeIcao) setActiveIcao("");
+      if (activeTab === "chart") setActiveTab("overview");
+      return;
+    }
+    if (!routeChartIcaos.includes(activeIcao)) {
+      setActiveIcao(routeChartIcaos[0] ?? "");
+    }
+  }, [activeIcao, activeTab, airportsLoading, routeChartIcaos]);
+
+  useEffect(() => {
+    const element = mapBottomBarRef.current;
+    if (!element) return;
+    let measureFrame = 0;
+
+    const updateHeight = () => {
+      const current = mapBottomBarRef.current;
+      if (!current) return;
+      setMapBottomBarHeight(Math.ceil(current.getBoundingClientRect().height));
+    };
+    const recomputeMobileLabels = () => {
+      updateHeight();
+      if (!isMobile) {
+        setMobileBottomBarLabelsVisible(true);
+        return;
+      }
+
+      setMobileBottomBarLabelsVisible(true);
+      if (measureFrame) window.cancelAnimationFrame(measureFrame);
+      measureFrame = window.requestAnimationFrame(() => {
+        measureFrame = window.requestAnimationFrame(() => {
+          const current = mapBottomBarRef.current;
+          if (!current) return;
+          setMobileBottomBarLabelsVisible(current.scrollWidth <= current.clientWidth + 2);
+          updateHeight();
+        });
+      });
+    };
+    recomputeMobileLabels();
+
+    if (typeof ResizeObserver === "undefined") {
+      return () => {
+        if (measureFrame) window.cancelAnimationFrame(measureFrame);
+      };
+    }
+    const observer = new ResizeObserver(recomputeMobileLabels);
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      if (measureFrame) window.cancelAnimationFrame(measureFrame);
+    };
+  }, [
+    openedFileId,
+    isMobile,
+    Boolean(vatsimPilot),
+    vatsimPilot?.callsign,
+    vatsimPilot?.flight_plan?.route,
+    Boolean(kmlResult),
+    kmlResult?.name,
+    kmlResult?.totalPoints,
+    kmlResult?.points.length,
+    parseResult?.points.length,
+    shortestResult?.points.length
+  ]);
+
+  const handleRouteEndpointChange = useCallback((role: "departure" | "arrival", value: string | undefined) => {
+    const normalized = normalizeAirportIcao(value);
+    const nextDeparture = role === "departure" ? normalized : departureIcao;
+    const nextArrival = role === "arrival" ? normalized : arrivalIcao;
+
+    setDepartureIcao(nextDeparture);
+    setArrivalIcao(nextArrival);
+    setShortestResult(null);
+    setParseResult(null);
+    setOpenedFileId(null);
+
+    if (nextDeparture && nextArrival && nextDeparture !== nextArrival) {
+      onRouteAirportsChange?.(nextDeparture, nextArrival);
+    }
+  }, [arrivalIcao, departureIcao, onRouteAirportsChange]);
 
   useEffect(() => {
     if (!airwaySearchAnchor) {
@@ -467,17 +650,50 @@ export function RouteIntegratedPage({
     setShortestResult(null);
   }, []);
 
-  const handleAddViaWaypoint = useCallback((ident: string) => {
-    const normalized = ident.trim().toUpperCase();
-    if (!normalized) return;
-    setShortestViaInput((prev) => {
-      const tokens = prev.split(/[\s,，]+/).map((item) => item.trim().toUpperCase()).filter(Boolean);
-      if (tokens.includes(normalized)) return tokens.join(" ");
-      return [...tokens, normalized].join(" ");
+  const toViaRouteItem = useCallback((input: string | Pick<HighAirwayWaypoint, "id" | "ident" | "name" | "lat" | "lon">): ViaRouteItem | null => {
+    const normalized = (typeof input === "string" ? input : input.ident).trim().toUpperCase();
+    if (!normalized) return null;
+    return typeof input === "string"
+      ? { type: "waypoint", ident: normalized }
+      : {
+          type: "waypoint",
+          ident: normalized,
+          waypointId: input.id,
+          name: input.name,
+          lat: input.lat,
+          lon: input.lon
+        };
+  }, []);
+
+  const handleAddViaWaypoint = useCallback((input: string | Pick<HighAirwayWaypoint, "id" | "ident" | "name" | "lat" | "lon">) => {
+    const nextItem = toViaRouteItem(input);
+    if (!nextItem) return;
+    const normalized = nextItem.ident;
+
+    setShortestViaItems((prev) => {
+      const exists = prev.some((item) => (
+        nextItem.waypointId != null
+          ? item.waypointId === nextItem.waypointId
+          : item.ident.toUpperCase() === normalized
+      ));
+      if (exists) return prev;
+      return [...prev, nextItem];
     });
     setActiveTab("overview");
     if (isMobile) setSiderCollapsed(false);
-  }, [isMobile]);
+  }, [isMobile, toViaRouteItem]);
+
+  const handleSetBoundaryWaypoint = useCallback((
+    role: "departure" | "arrival",
+    input: string | Pick<HighAirwayWaypoint, "id" | "ident" | "name" | "lat" | "lon">
+  ) => {
+    const nextItem = toViaRouteItem(input);
+    if (!nextItem) return;
+    if (role === "departure") setShortestDeparturePoint(nextItem);
+    else setShortestArrivalPoint(nextItem);
+    setActiveTab("overview");
+    if (isMobile) setSiderCollapsed(false);
+  }, [isMobile, toViaRouteItem]);
 
   const handleRemoveShortestPoint = useCallback((pointIndex: number) => {
     setShortestResult((prev) => (prev ? removeShortestRoutePoint(prev, pointIndex) : prev));
@@ -491,6 +707,10 @@ export function RouteIntegratedPage({
 
   const handleRemoveShortestRouteToken = useCallback((tokenIndex: number) => {
     setShortestResult((prev) => (prev ? removeShortestRouteToken(prev, tokenIndex) : prev));
+  }, []);
+
+  const handleSimplifyShortestRoute = useCallback(() => {
+    setShortestResult((prev) => (prev ? simplifyShortestRouteAirways(prev) : prev));
   }, []);
 
   // 处理 VATSIM 导入航路
@@ -534,7 +754,86 @@ export function RouteIntegratedPage({
 
   // 渲染总览 Tab 内容
   const renderOverviewTab = () => (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, height: "100%", overflowY: "auto" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12, height: "100%", overflowY: "auto" }}>
+      <div
+        style={{
+          padding: 14,
+          borderRadius: token.borderRadiusLG,
+          border: `1px solid ${token.colorBorderSecondary}`,
+          background: `linear-gradient(135deg, ${token.colorPrimaryBg}, ${token.colorBgContainer})`
+        }}
+      >
+        <Space direction="vertical" size={8} style={{ width: "100%" }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr auto", gap: 10, alignItems: "end" }}>
+            <div style={{ minWidth: 0 }}>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>起飞机场</Typography.Text>
+              <Select
+                value={departureIcao || undefined}
+                options={routeAirportOptions.filter((option) => !arrivalIcao || option.value !== arrivalIcao)}
+                loading={airportsLoading}
+                disabled={airportsLoading || routeAirportOptions.length === 0}
+                showSearch
+                allowClear
+                optionFilterProp="label"
+                filterOption={filterAirportOption}
+                onChange={(value) => handleRouteEndpointChange("departure", value)}
+                placeholder="搜索 nd.db3 全量机场"
+                style={{ width: "100%", marginTop: 4 }}
+              />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>降落机场</Typography.Text>
+              <Select
+                value={arrivalIcao || undefined}
+                options={routeAirportOptions.filter((option) => !departureIcao || option.value !== departureIcao)}
+                loading={airportsLoading}
+                disabled={airportsLoading || routeAirportOptions.length === 0}
+                showSearch
+                allowClear
+                optionFilterProp="label"
+                filterOption={filterAirportOption}
+                onChange={(value) => handleRouteEndpointChange("arrival", value)}
+                placeholder="搜索 nd.db3 全量机场"
+                style={{ width: "100%", marginTop: 4 }}
+              />
+            </div>
+            <Button
+              size="small"
+              icon={<FullscreenOutlined />}
+              disabled={getAllMapPoints().length === 0}
+              onClick={() => setFitBoundsTrigger((v) => v + 1)}
+              style={{ width: isMobile ? "100%" : undefined }}
+            >
+              定位路线
+            </Button>
+          </div>
+          <Space size={6} wrap>
+            <Tag color="blue">{departureIcao || "----"} → {arrivalIcao || "----"}</Tag>
+            {shortestResult ? <Tag color="green">最短航路 {shortestResult.distanceKm.toFixed(0)} km</Tag> : <Tag>待生成最短航路</Tag>}
+            {shortestResult ? <Tag color="blue">{shortestResult.points.length} 点</Tag> : null}
+            <Tag color={routeChartIcaos.length > 0 ? "cyan" : "default"}>
+              {routeChartIcaos.length > 0 ? `${routeChartIcaos.length} 个机场有航图` : "起降机场暂无航图"}
+            </Tag>
+          </Space>
+        </Space>
+      </div>
+      <RouteShortestPanel
+        departureIcao={departureIcao}
+        arrivalIcao={arrivalIcao}
+        departurePoint={shortestDeparturePoint}
+        arrivalPoint={shortestArrivalPoint}
+        onDeparturePointChange={setShortestDeparturePoint}
+        onArrivalPointChange={setShortestArrivalPoint}
+        viaItems={shortestViaItems}
+        onViaItemsChange={setShortestViaItems}
+        result={shortestResult}
+        onCalculated={handleShortestCalculated}
+        onClear={handleShortestClear}
+        onRemoveAirway={handleRemoveShortestAirway}
+        onRemovePoint={handleRemoveShortestPoint}
+        onRemoveRouteToken={handleRemoveShortestRouteToken}
+        onSimplifyRoute={handleSimplifyShortestRoute}
+      />
       <RouteParsePanel
         parseResult={parseResult}
         onParseSuccess={handleParseSuccess}
@@ -544,18 +843,6 @@ export function RouteIntegratedPage({
         departureIcao={departureIcao}
         arrivalIcao={arrivalIcao}
       />
-      <RouteShortestPanel
-        departureIcao={departureIcao}
-        arrivalIcao={arrivalIcao}
-        viaInput={shortestViaInput}
-        onViaInputChange={setShortestViaInput}
-        result={shortestResult}
-        onCalculated={handleShortestCalculated}
-        onClear={handleShortestClear}
-        onRemoveAirway={handleRemoveShortestAirway}
-        onRemovePoint={handleRemoveShortestPoint}
-        onRemoveRouteToken={handleRemoveShortestRouteToken}
-      />
     </div>
   );
 
@@ -564,21 +851,21 @@ export function RouteIntegratedPage({
     <div style={{ display: "flex", flexDirection: "column", gap: 12, height: "100%" }}>
       {/* 起降机场切换 */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <Tag
-          color={activeIcao === departureIcao ? "blue" : "default"}
-          onClick={() => setActiveIcao(departureIcao)}
-          style={{ cursor: "pointer", userSelect: "none", margin: 0 }}
-        >
-          起 {departureIcao}
-        </Tag>
-        <span style={{ color: token.colorTextSecondary }}>→</span>
-        <Tag
-          color={activeIcao === arrivalIcao ? "blue" : "default"}
-          onClick={() => setActiveIcao(arrivalIcao)}
-          style={{ cursor: "pointer", userSelect: "none", margin: 0 }}
-        >
-          降 {arrivalIcao}
-        </Tag>
+        {routeChartIcaos.map((icao) => (
+          <Tag
+            key={icao}
+            color={activeIcao === icao ? "blue" : "default"}
+            onClick={() => setActiveIcao(icao)}
+            style={{ cursor: "pointer", userSelect: "none", margin: 0 }}
+          >
+            {icao === departureIcao ? "起" : icao === arrivalIcao ? "降" : "航图"} {icao}
+          </Tag>
+        ))}
+        {routeChartIcaos.length === 1 && (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            另一机场暂无航图
+          </Typography.Text>
+        )}
       </div>
 
       {/* 分组筛选 */}
@@ -622,7 +909,7 @@ export function RouteIntegratedPage({
         {treeError && <Alert type="error" showIcon message={treeError} />}
 
         {!activeIcao ? (
-          <Empty description="请先选择机场" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          <Empty description="起降机场暂无可用航图" image={Empty.PRESENTED_IMAGE_SIMPLE} />
         ) : (
           <Spin spinning={treeLoading}>
             {!tree.length && !treeLoading ? (
@@ -659,12 +946,12 @@ export function RouteIntegratedPage({
             label: (
               <Space>
                 <EnvironmentOutlined />
-                总览
+                规划
               </Space>
             ),
             children: renderOverviewTab()
           },
-          {
+          routeChartIcaos.length > 0 ? {
             key: "chart",
             label: (
               <Space>
@@ -673,8 +960,8 @@ export function RouteIntegratedPage({
               </Space>
             ),
             children: renderChartTab()
-          }
-        ]}
+          } : null
+        ].filter(Boolean) as any}
         style={{ flex: 1 }}
       />
     </div>
@@ -683,6 +970,7 @@ export function RouteIntegratedPage({
   // 渲染地图
   const renderMap = () => (
     <MapContainer
+      className="routeMapCanvas"
       center={[35, 105]}
       zoom={5}
       style={{ height: "100%", width: "100%" }}
@@ -692,9 +980,14 @@ export function RouteIntegratedPage({
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
 
-      <FitBounds points={getAllMapPoints()} trigger={fitBoundsTrigger} />
+      <FitBounds points={getAllMapPoints()} trigger={fitBoundsTrigger} bottomInsetPx={mapBottomBarHeight} />
       <FollowAircraft pilot={vatsimPilot} enabled={!!vatsimPilot} centerTrigger={vatsimCenterTrigger} />
-      <MapRightClickSelector onSelect={setAirwaySearchAnchor} />
+      <DisableMapNativeLongPress />
+      <MapRightClickSelector
+        searchActive={!!airwaySearchAnchor}
+        onSelect={setAirwaySearchAnchor}
+        onCancel={() => setAirwaySearchAnchor(null)}
+      />
 
       {/* 右键搜索高空航路点 */}
       {airwaySearchAnchor && (
@@ -732,21 +1025,32 @@ export function RouteIntegratedPage({
                   </div>
                   <div style={{ marginTop: 4 }}>
                     {point.airways.slice(0, 8).map((airway) => (
-                      <Tag key={airway} color="cyan" style={{ marginBottom: 4 }}>
+                      <Tag
+                        key={airway}
+                        color="cyan"
+                        style={{ marginBottom: 4 }}
+                      >
                         {airway}
                       </Tag>
                     ))}
                     {point.airways.length > 8 && <Tag>+{point.airways.length - 8}</Tag>}
                   </div>
-                  <Button
-                    type="primary"
-                    size="small"
-                    icon={<PlusOutlined />}
-                    onClick={() => handleAddViaWaypoint(point.ident)}
-                    style={{ marginTop: 8 }}
-                  >
-                    作为途径点
-                  </Button>
+                  <Space size={6} wrap style={{ marginTop: 8 }}>
+                    <Button
+                      type="primary"
+                      size="small"
+                      icon={<PlusOutlined />}
+                      onClick={() => handleAddViaWaypoint(point)}
+                    >
+                      途径点
+                    </Button>
+                    <Button size="small" onClick={() => handleSetBoundaryWaypoint("departure", point)}>
+                      设为离场
+                    </Button>
+                    <Button size="small" onClick={() => handleSetBoundaryWaypoint("arrival", point)}>
+                      设为进场
+                    </Button>
+                  </Space>
                 </div>
               </Popup>
             </Marker>
@@ -930,12 +1234,15 @@ export function RouteIntegratedPage({
             <Alert type="error" showIcon message={airwaySearchError} style={{ marginBottom: 8 }} />
           )}
 
+          <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
+            可途径航点
+          </Typography.Text>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 154, overflowY: "auto" }}>
             {airwaySearchPoints.slice(0, 30).map((point) => (
               <Tag
                 key={`panel-high-airway-${point.id}`}
                 color="gold"
-                onClick={() => handleAddViaWaypoint(point.ident)}
+                onClick={() => handleAddViaWaypoint(point)}
                 style={{ margin: 0, padding: "4px 8px", borderRadius: 999, cursor: "pointer" }}
               >
                 <PlusOutlined style={{ marginRight: 4 }} />
@@ -955,6 +1262,16 @@ export function RouteIntegratedPage({
     );
   };
 
+  const bottomBarShowLabels = !isMobile || mobileBottomBarLabelsVisible;
+  const bottomActionButtonStyle: React.CSSProperties = {
+    background: "#111827",
+    borderColor: "#111827",
+    color: "#f8fafc",
+    boxShadow: "none",
+    fontWeight: 600
+  };
+  const bottomActionButtonShape = bottomBarShowLabels ? "round" as const : "circle" as const;
+
   return (
     <div style={{ height: windowHeight, display: "flex", flexDirection: "column", background: token.colorBgLayout }}>
       {/* 顶栏：工具区 */}
@@ -973,25 +1290,18 @@ export function RouteIntegratedPage({
         <Button icon={<ArrowLeftOutlined />} onClick={onBack}>
           返回
         </Button>
-
-        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          {/* VATSIM 追踪 - 内联 */}
-          <VatsimTrackBar
-            pilot={vatsimPilot}
-            onPilotUpdate={setVatsimPilot}
-            onImportRoute={handleImportVatsimRoute}
-            onLocateAircraft={handleLocateAircraft}
-            inline
-          />
-        </div>
-
-        {/* KML 上传 - 内联 */}
-        <KmlUploadBar
-          kmlResult={kmlResult}
-          onKmlParsed={handleKmlParsed}
-          onClear={handleKmlClear}
-          inline
+        <div
+          aria-hidden="true"
+          style={{
+            width: 1,
+            height: 22,
+            background: token.colorBorderSecondary,
+            flex: "0 0 auto"
+          }}
         />
+        <Typography.Text strong style={{ fontSize: 16 }}>
+          航线规划
+        </Typography.Text>
       </div>
 
       {/* 状态检查 */}
@@ -1009,11 +1319,6 @@ export function RouteIntegratedPage({
           {!isMobile && (
             <Layout.Sider
               width={420}
-              collapsible
-              collapsedWidth={0}
-              collapsed={siderCollapsed}
-              onCollapse={(v) => setSiderCollapsed(v)}
-              trigger={null}
               theme="light"
               style={{ borderRight: `1px solid ${token.colorBorderSecondary}`, overflow: "hidden" }}
             >
@@ -1023,43 +1328,6 @@ export function RouteIntegratedPage({
 
           {/* 主内容区 */}
           <Layout.Content style={{ position: "relative", minHeight: 0 }}>
-            {/* 移动端：打开抽屉的按钮 */}
-            {isMobile && (
-              <Button
-                type="primary"
-                icon={<MenuOutlined />}
-                onClick={() => {
-                  setMobileDrawerFullyOpen(false);
-                  setSiderCollapsed(false);
-                }}
-                style={{
-                  position: "absolute",
-                  top: 10,
-                  right: 10,
-                  zIndex: 1000,
-                  boxShadow: "0 2px 8px rgba(0,0,0,0.2)"
-                }}
-              >
-                面板
-              </Button>
-            )}
-
-            {/* 桌面端：折叠按钮 */}
-            {!isMobile && siderCollapsed && (
-              <Button
-                type="primary"
-                icon={<MenuOutlined />}
-                onClick={() => setSiderCollapsed(false)}
-                style={{
-                  position: "absolute",
-                  top: 10,
-                  left: 10,
-                  zIndex: 1000,
-                  boxShadow: "0 2px 8px rgba(0,0,0,0.2)"
-                }}
-              />
-            )}
-
             {/* 右侧预览区：地图或 PDF */}
             {openedFileId === null ? (
               <>
@@ -1070,67 +1338,128 @@ export function RouteIntegratedPage({
                 <div
                   style={{
                     position: "absolute",
-                    bottom: "calc(20px + env(safe-area-inset-bottom, 0px))",
-                    right: 20,
+                    bottom: "calc(12px + env(safe-area-inset-bottom, 0px))",
+                    left: isMobile ? 12 : 20,
+                    right: isMobile ? 12 : 20,
                     zIndex: 1000,
                     display: "flex",
                     flexDirection: "column",
-                    alignItems: "flex-end",
-                    gap: 8
+                    alignItems: "center",
+                    gap: 8,
+                    pointerEvents: "none"
                   }}
                 >
-                  {vatsimPilot && (
-                    <Button
-                      type="primary"
-                      shape="circle"
-                      icon={<AimOutlined />}
-                      onClick={handleLocateAircraft}
-                      style={{ opacity: 0.9, boxShadow: "0 2px 6px rgba(0,0,0,0.2)" }}
-                    />
-                  )}
-
-                  {getAllMapPoints().length > 0 && (
-                    <Button
-                      type="primary"
-                      shape="circle"
-                      icon={<FullscreenOutlined />}
-                      onClick={() => setFitBoundsTrigger((v) => v + 1)}
-                      style={{ opacity: 0.9, boxShadow: "0 2px 6px rgba(0,0,0,0.2)" }}
-                    />
-                  )}
-
-                  {showLegend ? (
-                    <div
-                      style={{
-                        background: token.colorBgElevated,
-                        borderRadius: token.borderRadius,
-                        padding: 12,
-                        boxShadow: "0 2px 8px rgba(0,0,0,0.15)"
-                      }}
-                    >
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                        <span style={{ fontWeight: 500, fontSize: 12 }}>图例</span>
-                        <Button type="text" size="small" icon={<CloseOutlined />} onClick={() => setShowLegend(false)} />
+	                  <div
+                      ref={mapBottomBarRef}
+	                    style={{
+	                      display: "flex",
+	                      flexDirection: "row",
+	                      alignItems: "center",
+	                      justifyContent: "center",
+	                      gap: 10,
+	                      width: isMobile ? "100%" : "min(980px, 100%)",
+	                      padding: 8,
+	                      borderRadius: 999,
+	                      background: token.colorBgElevated,
+	                      border: `1px solid ${token.colorBorderSecondary}`,
+	                      boxShadow: "0 10px 28px rgba(15, 23, 42, 0.24)",
+	                      pointerEvents: "auto",
+                        overflowX: "auto",
+                        overflowY: "hidden",
+                        WebkitOverflowScrolling: "touch",
+                        scrollbarWidth: "thin"
+	                    }}
+	                  >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          flexWrap: "nowrap",
+                          flex: "0 0 auto",
+                          minWidth: 0
+                        }}
+                      >
+                        <VatsimTrackBar
+                          pilot={vatsimPilot}
+	                          onPilotUpdate={setVatsimPilot}
+	                          onImportRoute={handleImportVatsimRoute}
+	                          inline
+	                          compact={isMobile}
+                            showLabels={bottomBarShowLabels}
+                            buttonStyle={bottomActionButtonStyle}
+	                        />
+	                        <KmlUploadBar
+	                          kmlResult={kmlResult}
+	                          onKmlParsed={handleKmlParsed}
+	                          onClear={handleKmlClear}
+	                          inline
+	                          compact={isMobile}
+                            showLabels={bottomBarShowLabels}
+                            buttonStyle={bottomActionButtonStyle}
+	                        />
                       </div>
-                      <Space direction="vertical" size={4}>
-                        <Space><div style={{ width: 14, height: 14, background: "#e74c3c", borderRadius: "50%" }} /><span>机场</span></Space>
-                        <Space><div style={{ width: 14, height: 14, background: "#2ecc71", borderRadius: "50%" }} /><span>指定航点</span></Space>
-                        <Space><div style={{ width: 14, height: 14, background: "#3498db", borderRadius: "50%" }} /><span>中间航点</span></Space>
-                        <Space><div style={{ width: 14, height: 14, background: "#9b59b6", borderRadius: "50%" }} /><span>VOR/NDB</span></Space>
-                        <Space><div style={{ width: 30, height: 3, background: "#3498db" }} /><span>解析航路</span></Space>
-                        <Space><div style={{ width: 30, height: 2, background: "#8e44ad", borderTop: "2px dashed #8e44ad" }} /><span>KML 航迹</span></Space>
-                        <Space><div style={{ width: 30, height: 3, background: "#16a085" }} /><span>最短航路</span></Space>
-                      </Space>
-                    </div>
-                  ) : (
-                    <Button
-                      type="primary"
-                      shape="circle"
-                      icon={<UnorderedListOutlined />}
-                      onClick={() => setShowLegend(true)}
-                      style={{ opacity: 0.9, boxShadow: "0 2px 6px rgba(0,0,0,0.2)" }}
-                    />
-                  )}
+
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "row",
+                          alignItems: "center",
+	                          justifyContent: "center",
+                          gap: 8,
+                          flex: "0 0 auto",
+                          flexWrap: "nowrap"
+                        }}
+                      >
+                        {vatsimPilot && (
+                          <AntTooltip title="定位到 VATSIM 飞机">
+                            <Button
+                              size="small"
+                              shape={bottomActionButtonShape}
+                              icon={<AimOutlined />}
+                              onClick={handleLocateAircraft}
+                              aria-label="定位到 VATSIM 飞机"
+                              style={bottomActionButtonStyle}
+                            >
+                              {bottomBarShowLabels ? "定位" : null}
+                            </Button>
+                          </AntTooltip>
+                        )}
+
+                        {getAllMapPoints().length > 0 && (
+                          <AntTooltip title="缩放到全图">
+                            <Button
+                              size="small"
+                              shape={bottomActionButtonShape}
+                              icon={<FullscreenOutlined />}
+                              onClick={() => setFitBoundsTrigger((v) => v + 1)}
+                              aria-label="缩放到全图"
+                              style={bottomActionButtonStyle}
+                            >
+                              {bottomBarShowLabels ? "全图" : null}
+                            </Button>
+                          </AntTooltip>
+                        )}
+
+                        {isMobile && (
+                          <AntTooltip title="打开面板">
+                            <Button
+                              size="small"
+                              shape={bottomActionButtonShape}
+                              icon={<MenuOutlined />}
+                              aria-label="打开面板"
+                              style={bottomActionButtonStyle}
+                              onClick={() => {
+                                setMobileDrawerFullyOpen(false);
+                                setSiderCollapsed(false);
+                              }}
+                            >
+                              {bottomBarShowLabels ? "面板" : null}
+                            </Button>
+                          </AntTooltip>
+                        )}
+                      </div>
+                  </div>
                 </div>
               </>
             ) : (

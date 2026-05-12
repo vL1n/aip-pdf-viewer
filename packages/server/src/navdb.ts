@@ -51,6 +51,14 @@ export interface HighAirwayWaypoint extends NavPointWithId {
   levels: string[];
 }
 
+/** 导航数据库机场摘要 */
+export interface NavAirport {
+  icao: string;
+  name: string | null;
+  lat: number;
+  lon: number;
+}
+
 
 /**
  * 导航数据库查询类
@@ -72,6 +80,27 @@ export class NavDatabase {
       lon: row.Longtitude,
       type: "airport"
     };
+  }
+
+  /** 查询 nd.db3 中的全部机场 */
+  listAirports(): NavAirport[] {
+    const rows = this.db
+      .prepare(
+        `
+          SELECT ICAO, Name, Latitude, Longtitude
+          FROM Airports
+          WHERE ICAO IS NOT NULL AND TRIM(ICAO) <> ''
+          ORDER BY ICAO
+        `
+      )
+      .all() as Array<{ ICAO: string; Name: string | null; Latitude: number; Longtitude: number }>;
+
+    return rows.map((row) => ({
+      icao: String(row.ICAO).toUpperCase(),
+      name: row.Name,
+      lat: row.Latitude,
+      lon: row.Longtitude
+    }));
   }
 
   /** 通过标识符查询航点 (Waypoint)，返回所有匹配的航点 */
@@ -249,6 +278,23 @@ export class NavDatabase {
     };
   }
 
+  /** 通过 ID 获取航点信息，并保留数据库 ID */
+  getWaypointCandidateById(id: number): NavPointWithId | null {
+    const row = this.db
+      .prepare(`SELECT ID, Ident, Name, Latitude, Longtitude FROM Waypoints WHERE ID = ?`)
+      .get(id) as { ID: number; Ident: string; Name: string; Latitude: number; Longtitude: number } | undefined;
+
+    if (!row) return null;
+    return {
+      id: row.ID,
+      ident: row.Ident,
+      name: row.Name,
+      lat: row.Latitude,
+      lon: row.Longtitude,
+      type: "waypoint"
+    };
+  }
+
   /** 通过标识符查询航点并保留数据库 ID */
   findWaypointCandidates(ident: string): NavPointWithId[] {
     const rows = this.db
@@ -263,6 +309,21 @@ export class NavDatabase {
       lon: row.Longtitude,
       type: "waypoint" as const
     }));
+  }
+
+  /** 获取所有参与航路图的航点 ID，用于判断候选点是否可直接接入航路网 */
+  getAirwayWaypointIds(): Set<number> {
+    const rows = this.db
+      .prepare(
+        `
+          SELECT Waypoint1ID AS ID FROM AirwayLegs WHERE Waypoint1ID IS NOT NULL
+          UNION
+          SELECT Waypoint2ID AS ID FROM AirwayLegs WHERE Waypoint2ID IS NOT NULL
+        `
+      )
+      .all() as Array<{ ID: number }>;
+
+    return new Set(rows.map((row) => row.ID));
   }
 
   /** 读取全量航路图边，用于最短航路计算 */
